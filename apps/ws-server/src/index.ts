@@ -8,6 +8,11 @@ const { upgradeWebSocket, websocket } = createBunWebSocket();
 const sessionManager = new SessionManager();
 const app = new Hono();
 
+app.use('*', async (c, next) => {
+  console.log(`[BELLA:HTTP] ${c.req.method} ${c.req.url}`);
+  await next();
+});
+
 app.get('/health', (c) => {
   return c.json({
     status: 'ok',
@@ -17,11 +22,19 @@ app.get('/health', (c) => {
   });
 });
 
-app.post('/inbound/twiml', (c) => {
-  const wsPublicUrl = process.env.WS_SERVER_PUBLIC_URL || 'wss://localhost:8080';
-  const wsStreamUrl = `${wsPublicUrl}/ws/stream`;
-  const callerPhone = c.req.query('From') || c.req.query('Caller') || 'unknown';
+app.post('/inbound/twiml', async (c) => {
+  const publicUrl = process.env.PUBLIC_URL || `http://localhost:${process.env.WS_SERVER_PORT || 8080}`;
+  const wsUrl = publicUrl.replace('https://', 'wss://').replace('http://', 'ws://');
+  const wsStreamUrl = `${wsUrl}/ws/stream`;
+
+  const body = await c.req.parseBody();
+  const callerPhone = (body['From'] as string) || (body['Caller'] as string)
+    || c.req.query('From') || c.req.query('Caller') || 'unknown';
+  const callSid = (body['CallSid'] as string) || c.req.query('CallSid') || 'unknown';
+
+  console.log(`[BELLA:HTTP] /inbound/twiml hit — callerPhone=${callerPhone} callSid=${callSid} wsStreamUrl=${wsStreamUrl}`);
   const twiml = generateStreamTwiML(wsStreamUrl, callerPhone);
+  console.log(`[BELLA:HTTP] TwiML response:\n${twiml}`);
 
   return c.text(twiml, 200, { 'Content-Type': 'application/xml' });
 });
@@ -33,7 +46,7 @@ app.get(
 
     return {
       onOpen(_event, ws) {
-        console.log('[ws] New WebSocket connection');
+        console.log('[BELLA:WS] New WebSocket connection from Twilio');
         void ws;
       },
 
@@ -45,6 +58,7 @@ app.get(
             const parsed = JSON.parse(raw);
             if (parsed.event === 'start' && parsed.start?.callSid) {
               callSid = parsed.start.callSid;
+              console.log(`[BELLA:WS] Start event received — callSid=${callSid}`);
               const rawWs = ws.raw as unknown as { send: (data: string) => void };
               sessionManager.createSession(callSid, rawWs);
             }
@@ -60,13 +74,13 @@ app.get(
 
       onClose() {
         if (callSid) {
-          console.log(`[ws] Connection closed for call ${callSid}`);
+          console.log(`[BELLA:WS] WebSocket connection closed — callSid=${callSid}`);
           sessionManager.endSession(callSid);
         }
       },
 
       onError(event) {
-        console.error('[ws] WebSocket error:', event);
+        console.error(`[BELLA:WS] WebSocket error — callSid=${callSid}`, event);
         if (callSid) {
           sessionManager.endSession(callSid);
         }

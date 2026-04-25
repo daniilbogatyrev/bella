@@ -224,9 +224,13 @@ export class GeminiClient {
   /** Start a new chat session with Bella's system prompt and tool declarations. */
   startChat(): ChatSession {
     this.chatSession = this.model.startChat({
-      systemInstruction: SYSTEM_PROMPT,
+      systemInstruction: {
+        role: 'user',
+        parts: [{ text: SYSTEM_PROMPT }],
+      },
       tools: [{ functionDeclarations: TOOL_DECLARATIONS }],
     });
+    console.log(`[BELLA:LLM] Gemini chat session started with ${TOOL_DECLARATIONS.length} tool declarations`);
     logger.info('Gemini chat session started');
     return this.chatSession;
   }
@@ -241,8 +245,14 @@ export class GeminiClient {
     if (!this.chatSession) {
       this.startChat();
     }
+    console.log(`[BELLA:LLM] Sending message to Gemini: "${message.substring(0, 120)}${message.length > 120 ? '...' : ''}"`);
+    const start = Date.now();
     const result = await this.chatSession!.sendMessage(message);
     const response = result.response;
+    const elapsed = Date.now() - start;
+    const text = response.text?.() || '';
+    const funcCalls = response.functionCalls?.();
+    console.log(`[BELLA:LLM] Gemini response in ${elapsed}ms — text="${text.substring(0, 120)}${text.length > 120 ? '...' : ''}" functionCalls=${funcCalls?.length || 0}`);
     logger.debug({ text: response.text?.() }, 'Gemini response received');
     return response;
   }
@@ -257,17 +267,24 @@ export class GeminiClient {
     if (!this.chatSession) {
       throw new Error('No active chat session');
     }
+    console.log(`[BELLA:LLM] Sending ${results.length} tool result(s) to Gemini: ${results.map(r => r.name).join(', ')}`);
+    const start = Date.now();
     const functionResponseParts = results.map((r) => ({
       functionResponse: { name: r.name, response: r.response },
     }));
     const result = await this.chatSession.sendMessage(functionResponseParts);
     const response = result.response;
+    const elapsed = Date.now() - start;
+    const text = response.text?.() || '';
+    const funcCalls = response.functionCalls?.();
+    console.log(`[BELLA:LLM] Gemini tool-result response in ${elapsed}ms — text="${text.substring(0, 120)}${text.length > 120 ? '...' : ''}" functionCalls=${funcCalls?.length || 0}`);
     logger.debug({ text: response.text?.() }, 'Gemini tool result response');
     return response;
   }
 
   /** End the chat session. */
   endChat(): void {
+    console.log(`[BELLA:LLM] Gemini chat session ended`);
     this.chatSession = null;
     logger.info('Gemini chat session ended');
   }
@@ -279,11 +296,15 @@ export class GeminiClient {
    * @returns Summary text
    */
   async generateSummary(conversationContext: string): Promise<string> {
+    console.log(`[BELLA:LLM] Generating call summary — contextLen=${conversationContext.length}`);
+    const start = Date.now();
     const result = await this.model.generateContent(
       `Summarize this insurance call in 2-3 sentences for the agent's records. ` +
         `Focus on: who called, what they needed, what actions were taken, and next steps.\n\n${conversationContext}`,
     );
-    return result.response.text() || 'Call completed.';
+    const summary = result.response.text() || 'Call completed.';
+    console.log(`[BELLA:LLM] Summary generated in ${Date.now() - start}ms: "${summary.substring(0, 120)}${summary.length > 120 ? '...' : ''}"`);
+    return summary;
   }
 }
 

@@ -8,6 +8,7 @@ import {
   Phone,
   FileText,
   Users,
+  Settings,
   LogOut,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -20,6 +21,7 @@ const navItems = [
   { href: '/calls', label: 'Calls', icon: Phone },
   { href: '/claims', label: 'Claims', icon: FileText },
   { href: '/customers', label: 'Customers', icon: Users },
+  { href: '/settings', label: 'Settings', icon: Settings },
 ] as const;
 
 function getInitials(name: string | null | undefined): string {
@@ -41,7 +43,7 @@ export function SidebarNav({ onLinkClick }: { onLinkClick?: () => void }) {
       <div className="px-4 py-5">
         <Link
           href="/dashboard"
-          className="text-xl font-bold tracking-tight"
+          className="font-display text-xl font-bold tracking-tight"
           onClick={onLinkClick}
         >
           Bella
@@ -99,14 +101,14 @@ export function SidebarNav({ onLinkClick }: { onLinkClick?: () => void }) {
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={() => signOut({ callbackUrl: '/auth/signin' })}
+              onClick={() => signOut({ callbackUrl: '/login' })}
               aria-label="Sign out"
             >
               <LogOut className="size-4" />
             </Button>
           </div>
         ) : (
-          <Link href="/auth/signin">
+          <Link href="/login">
             <Button variant="outline" className="w-full">
               Sign in
             </Button>

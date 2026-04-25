@@ -97,7 +97,7 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
           </Button>
         </Link>
         <div className="flex-1">
-          <h1 className="text-3xl font-bold tracking-tight">
+          <h1 className="font-display text-3xl font-bold tracking-tight">
             {customer.firstName} {customer.lastName}
           </h1>
           <p className="text-muted-foreground">Customer Profile</p>

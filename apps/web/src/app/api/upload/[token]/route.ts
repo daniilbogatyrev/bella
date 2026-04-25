@@ -5,14 +5,21 @@ import { eq } from 'drizzle-orm';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 
-const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_SIZE = 50 * 1024 * 1024; // 50MB
 const ALLOWED_TYPES = [
   'image/jpeg',
   'image/png',
-  'image/gif',
+  'image/heic',
+  'image/heif',
   'application/pdf',
   'video/mp4',
 ];
+
+function isAllowedFile(file: File): boolean {
+  if (ALLOWED_TYPES.includes(file.type)) return true;
+  const name = file.name.toLowerCase();
+  return name.endsWith('.heic') || name.endsWith('.heif');
+}
 
 export async function POST(
   req: NextRequest,
@@ -69,16 +76,36 @@ export async function POST(
 
   if (file.size > MAX_SIZE) {
     return NextResponse.json(
-      { error: 'File too large (max 10MB)' },
+      { error: 'File too large (max 50MB)' },
       { status: 400 },
     );
   }
 
-  if (!ALLOWED_TYPES.includes(file.type)) {
+  if (!isAllowedFile(file)) {
     return NextResponse.json(
-      { error: 'Invalid file type. Accepted: JPG, PNG, GIF, PDF, MP4' },
+      { error: 'Invalid file type. Accepted: JPG, PNG, HEIC, PDF, MP4' },
       { status: 400 },
     );
+  }
+
+  const latitude = formData.get('latitude') as string | null;
+  const longitude = formData.get('longitude') as string | null;
+  const accuracy = formData.get('accuracy') as string | null;
+
+  const metadata: Record<string, unknown> = {
+    uploadedAt: new Date().toISOString(),
+    originalFileName: file.name,
+    fileSize: file.size,
+    mimeType: file.type,
+    userAgent: req.headers.get('user-agent') ?? undefined,
+  };
+
+  if (latitude && longitude) {
+    metadata.geolocation = {
+      latitude: parseFloat(latitude),
+      longitude: parseFloat(longitude),
+      accuracy: accuracy ? parseFloat(accuracy) : undefined,
+    };
   }
 
   try {
@@ -97,6 +124,7 @@ export async function POST(
         fileName: file.name,
         fileUrl: `/uploads/${fileName}`,
         status: 'uploaded',
+        metadata,
       })
       .where(eq(evidence.uploadToken, token));
 

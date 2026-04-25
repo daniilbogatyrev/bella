@@ -1,36 +1,41 @@
 import NextAuth from 'next-auth';
-import Google from 'next-auth/providers/google';
+import { getDb } from '@/lib/db';
+import { adminUsers } from '@bella/db';
+import { eq } from 'drizzle-orm';
+import { authConfig } from './auth.config';
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  providers: [
-    Google({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    }),
-  ],
-  session: {
-    strategy: 'jwt',
-  },
+  ...authConfig,
   callbacks: {
-    async signIn() {
+    ...authConfig.callbacks,
+    async signIn({ user }) {
+      if (!user.email) return false;
+      const db = getDb();
+      const admin = await db.query.adminUsers.findFirst({
+        where: eq(adminUsers.email, user.email),
+      });
+      if (!admin) return '/login?error=AccessDenied';
       return true;
     },
     async jwt({ token, user }) {
-      if (user) {
-        token.role = 'viewer';
+      if (user?.email) {
+        const db = getDb();
+        const admin = await db.query.adminUsers.findFirst({
+          where: eq(adminUsers.email, user.email),
+        });
+        if (admin) {
+          token.role = admin.role;
+          token.dbId = admin.id;
+        }
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
-        session.user.id = token.sub!;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (session.user as any).role = (token.role as string) ?? 'viewer';
+        session.user.id = (token.dbId as string) ?? token.sub!;
+        session.user.role = (token.role as string) ?? 'viewer';
       }
       return session;
     },
-  },
-  pages: {
-    signIn: '/auth/signin',
   },
 });

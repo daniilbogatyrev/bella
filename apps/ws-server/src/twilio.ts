@@ -15,6 +15,7 @@ const VALID_EVENTS = new Set(['connected', 'start', 'media', 'mark', 'stop']);
  * @returns Valid TwiML XML string
  */
 export function generateStreamTwiML(wsUrl: string, callerPhone: string): string {
+  console.log(`[BELLA:TWILIO] Generating TwiML — wsUrl=${wsUrl} callerPhone=${callerPhone}`);
   const escapedPhone = escapeXml(callerPhone);
   const escapedUrl = escapeXml(wsUrl);
   return [
@@ -41,11 +42,13 @@ export function parseTwilioMessage(data: string | Buffer): TwilioMessage | null 
     const parsed = JSON.parse(raw);
 
     if (!parsed || typeof parsed !== 'object' || !VALID_EVENTS.has(parsed.event)) {
+      console.log(`[BELLA:TWILIO] Invalid/unknown event received: ${parsed?.event || 'undefined'}`);
       return null;
     }
 
     return parsed as TwilioMessage;
-  } catch {
+  } catch (err) {
+    console.error(`[BELLA:TWILIO] Failed to parse Twilio message`, err);
     return null;
   }
 }

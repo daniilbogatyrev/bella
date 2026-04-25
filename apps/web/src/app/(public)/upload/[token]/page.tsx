@@ -36,10 +36,10 @@ export default async function UploadPage({ params }: UploadPageProps) {
           <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground text-2xl font-bold">
             B
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">Bella Insurance</h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Bella Insurance</h1>
           {isValid ? (
             <p className="text-muted-foreground">
-              Upload evidence for your claim
+              Please upload your evidence for your claim
             </p>
           ) : (
             <p className="text-muted-foreground">Evidence Upload</p>
@@ -47,11 +47,11 @@ export default async function UploadPage({ params }: UploadPageProps) {
         </div>
 
         {isValid ? (
-          <UploadForm token={token} />
+          <UploadForm token={token} description={record?.description} />
         ) : (
           <div className="flex flex-col items-center gap-4 rounded-xl border bg-white p-8 text-center shadow-sm dark:bg-slate-900">
             <ShieldAlertIcon className="size-12 text-destructive/70" />
-            <h2 className="text-lg font-semibold">Invalid Upload Link</h2>
+            <h2 className="font-display text-lg font-semibold">Invalid Upload Link</h2>
             <p className="text-sm text-muted-foreground max-w-xs">
               This upload link is invalid, has already been used, or has expired.
               Please contact your insurance agent for a new link.

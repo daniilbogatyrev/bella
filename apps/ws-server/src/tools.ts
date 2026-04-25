@@ -16,6 +16,7 @@ type ToolHandler = (args: Record<string, unknown>, ctx: ToolContext) => Promise<
 const toolHandlers: Record<string, ToolHandler> = {
   lookup_customer: async (args, _ctx) => {
     const phone = args.phone as string;
+    console.log(`[BELLA:TOOL] lookup_customer — phone=${phone}`);
     const db = getDb();
 
     const customer = await db.query.customers.findFirst({
@@ -24,10 +25,12 @@ const toolHandlers: Record<string, ToolHandler> = {
     });
 
     if (!customer) {
+      console.log(`[BELLA:TOOL] lookup_customer — no customer found for phone=${phone}`);
       logger.info({ phone }, 'Customer not found');
       return { found: false, message: `No customer found for phone ${phone}` };
     }
 
+    console.log(`[BELLA:TOOL] lookup_customer — found customerId=${customer.id} name=${customer.firstName} ${customer.lastName} policies=${customer.policies.length}`);
     logger.info({ customerId: customer.id, phone }, 'Customer found');
     return {
       found: true,
@@ -52,12 +55,14 @@ const toolHandlers: Record<string, ToolHandler> = {
 
   get_policies: async (args) => {
     const customerId = args.customerId as string;
+    console.log(`[BELLA:TOOL] get_policies — customerId=${customerId}`);
     const db = getDb();
 
     const results = await db.query.policies.findMany({
       where: eq(policies.customerId, customerId),
     });
 
+    console.log(`[BELLA:TOOL] get_policies — found ${results.length} policies`);
     logger.info({ customerId, count: results.length }, 'Policies retrieved');
     return {
       policies: results.map((p) => ({
@@ -74,6 +79,7 @@ const toolHandlers: Record<string, ToolHandler> = {
   },
 
   open_claim: async (args, ctx) => {
+    console.log(`[BELLA:TOOL] open_claim — customerId=${args.customerId} type=${args.type} description="${args.description}"`);
     const db = getDb();
 
     const [claim] = await db
@@ -97,6 +103,7 @@ const toolHandlers: Record<string, ToolHandler> = {
       metadata: { callerPhone: ctx.callerPhone },
     });
 
+    console.log(`[BELLA:TOOL] open_claim — created claimId=${claim!.id}`);
     logger.info({ claimId: claim!.id, type: args.type }, 'Claim opened');
     return {
       success: true,
@@ -110,6 +117,7 @@ const toolHandlers: Record<string, ToolHandler> = {
     const db = getDb();
     const claimId = args.claimId as string;
     const eventType = (args.type as string) || 'fact';
+    console.log(`[BELLA:TOOL] log_fact — claimId=${claimId} type=${eventType} content="${(args.content as string).substring(0, 80)}"`);
 
     await db.insert(claimEvents).values({
       claimId,
@@ -138,6 +146,7 @@ const toolHandlers: Record<string, ToolHandler> = {
     const claimId = args.claimId as string;
     const fileType = args.fileType as 'photo' | 'document' | 'video';
     const description = args.description as string;
+    console.log(`[BELLA:TOOL] request_evidence — claimId=${claimId} fileType=${fileType} description="${description}"`);
 
     const uploadToken = crypto.randomUUID();
 
@@ -149,18 +158,20 @@ const toolHandlers: Record<string, ToolHandler> = {
       status: 'pending',
     });
 
-    const uploadUrl = `${process.env.WEB_APP_URL || 'https://app.safeguard.example.com'}/upload/${uploadToken}`;
+    const dashboardUrl = process.env.DASHBOARD_PUBLIC_URL || process.env.NEXTAUTH_URL || 'http://localhost:3000';
+    const uploadUrl = `${dashboardUrl}/upload/${uploadToken}`;
 
     if (ctx.callerPhone && process.env.TWILIO_ACCOUNT_SID) {
       try {
         const twilio = await import('twilio');
         const twilioClient = twilio.default(
-          process.env.TWILIO_ACCOUNT_SID,
-          process.env.TWILIO_AUTH_TOKEN,
+          process.env.TWILIO_API_KEY_SID!,
+          process.env.TWILIO_API_KEY_SECRET!,
+          { accountSid: process.env.TWILIO_ACCOUNT_SID! },
         );
         await twilioClient.messages.create({
           body: `SafeGuard Insurance: Please upload your ${fileType} here: ${uploadUrl}\n\nRe: ${description}`,
-          from: process.env.TWILIO_PHONE_NUMBER || '',
+          from: process.env.TWILIO_SMS_PHONE_NUMBER || process.env.TWILIO_PHONE_NUMBER || '',
           to: ctx.callerPhone,
         });
         logger.info({ claimId, phone: ctx.callerPhone }, 'Evidence SMS sent');
@@ -183,6 +194,7 @@ const toolHandlers: Record<string, ToolHandler> = {
     const customerId = args.customerId as string;
     const product = args.product as string;
     const reason = args.reason as string;
+    console.log(`[BELLA:TOOL] upsell_product — customerId=${customerId} product="${product}" reason="${reason}"`);
 
     if (ctx.claimId) {
       await db.insert(claimEvents).values({
@@ -206,6 +218,7 @@ const toolHandlers: Record<string, ToolHandler> = {
   transfer_to_human: async (args, ctx) => {
     const reason = args.reason as string;
     const department = (args.department as string) || 'general';
+    console.log(`[BELLA:TOOL] transfer_to_human — reason="${reason}" department=${department}`);
 
     if (ctx.claimId) {
       const db = getDb();
@@ -242,16 +255,22 @@ export async function executeTool(
 ): Promise<object> {
   const handler = toolHandlers[name];
   if (!handler) {
+    console.log(`[BELLA:TOOL] Unknown tool called: ${name}`);
     logger.warn({ name }, 'Unknown tool called');
     return { error: true, message: `Unknown tool: ${name}` };
   }
 
   try {
+    console.log(`[BELLA:TOOL] Executing ${name}(${JSON.stringify(args)})`);
+    const start = Date.now();
     logger.info({ tool: name, args }, 'Executing tool');
     const result = await handler(args, ctx);
+    const elapsed = Date.now() - start;
+    console.log(`[BELLA:TOOL] ${name} completed in ${elapsed}ms — result=${JSON.stringify(result).substring(0, 200)}`);
     logger.info({ tool: name }, 'Tool executed successfully');
     return result;
   } catch (err) {
+    console.error(`[BELLA:TOOL] ${name} failed:`, err);
     logger.error({ tool: name, err }, 'Tool execution failed');
     return { error: true, message: `Tool ${name} failed: ${(err as Error).message}` };
   }

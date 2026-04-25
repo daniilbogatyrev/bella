@@ -16,6 +16,7 @@ const pageTitles: Record<string, string> = {
   '/calls': 'Calls',
   '/claims': 'Claims',
   '/customers': 'Customers',
+  '/settings': 'Settings',
 };
 
 function getPageTitle(pathname: string): string {
@@ -51,7 +52,7 @@ export function Header() {
       </Sheet>
 
       <div className="flex-1">
-        <h1 className="text-lg font-semibold">{title}</h1>
+        <h1 className="font-display text-lg font-semibold">{title}</h1>
       </div>
     </header>
   );

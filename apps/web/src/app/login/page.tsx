@@ -1,6 +1,8 @@
 'use client';
 
 import { signIn } from 'next-auth/react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -10,20 +12,35 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 
-export default function SignInPage() {
+function LoginContent() {
+  const searchParams = useSearchParams();
+  const error = searchParams.get('error');
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
-          <div className="mx-auto mb-2 text-3xl font-bold tracking-tight">
-            Bella
+          <div className="mx-auto mb-2 font-display text-3xl font-bold tracking-tight">
+            Bella Admin
           </div>
-          <CardTitle className="text-xl">Sign in to Bella Dashboard</CardTitle>
+          <CardTitle className="text-xl">Sign in</CardTitle>
           <CardDescription>
-            Use your Google account to continue
+            Insurance Agent Dashboard
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          {error === 'AccessDenied' && (
+            <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-center text-sm text-destructive">
+              Access Denied — your account is not authorized.
+              <br />
+              Contact an administrator to get access.
+            </div>
+          )}
+          {error && error !== 'AccessDenied' && (
+            <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-center text-sm text-destructive">
+              Something went wrong. Please try again.
+            </div>
+          )}
           <Button
             className="w-full"
             variant="outline"
@@ -51,10 +68,18 @@ export default function SignInPage() {
                 fill="#EA4335"
               />
             </svg>
-            Continue with Google
+            Sign in with Google
           </Button>
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginContent />
+    </Suspense>
   );
 }

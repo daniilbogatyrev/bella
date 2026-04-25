@@ -47,7 +47,7 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Customers</h1>
+          <h1 className="font-display text-3xl font-bold tracking-tight">Customers</h1>
           <p className="text-muted-foreground">
             Manage your customer directory
           </p>
@@ -68,7 +68,7 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
       {data.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16 text-center">
           <UsersIcon className="size-10 text-muted-foreground/50 mb-3" />
-          <h3 className="text-lg font-medium">No customers found</h3>
+          <h3 className="font-display text-lg font-medium">No customers found</h3>
           <p className="text-sm text-muted-foreground mt-1">
             {q ? 'Try adjusting your search query.' : 'Add your first customer to get started.'}
           </p>

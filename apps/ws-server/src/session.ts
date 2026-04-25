@@ -54,6 +54,7 @@ export class SessionManager {
     };
 
     this.sessions.set(callSid, session);
+    console.log(`[BELLA:SESSION] New session created — sessionId=${session.id} callSid=${callSid}`);
     logger.info({ sessionId: session.id, callSid }, 'Session created');
     return session;
   }
@@ -79,9 +80,11 @@ export class SessionManager {
 
     switch (message.event) {
       case 'connected':
+        console.log(`[BELLA:TWILIO] Connected event received — callSid=${callSid}`);
         logger.info({ callSid }, 'Twilio connected');
         break;
       case 'start':
+        console.log(`[BELLA:TWILIO] Start event — callSid=${callSid} streamSid=${(message as TwilioStartEvent).start?.streamSid}`);
         this.handleStart(session, message);
         break;
       case 'media':
@@ -91,6 +94,7 @@ export class SessionManager {
         this.handleMark(session, message);
         break;
       case 'stop':
+        console.log(`[BELLA:TWILIO] Stop event — callSid=${callSid}`);
         this.handleStop(session);
         break;
     }
@@ -106,12 +110,14 @@ export class SessionManager {
       AUDIO_QUEUE_INTERVAL_MS,
     );
 
+    console.log(`[BELLA:SESSION] Session now active — callSid=${session.callSid} streamSid=${session.streamSid} callerPhone=${session.callerPhone} status=active`);
     logger.info(
       { streamSid: session.streamSid, callerPhone: session.callerPhone },
       'Stream started',
     );
 
     this.initializePipeline(session).catch((err) => {
+      console.error(`[BELLA:SESSION] Pipeline initialization failed — callSid=${session.callSid}`, err);
       logger.error({ err, callSid: session.callSid }, 'Pipeline initialization failed');
     });
   }
@@ -126,6 +132,7 @@ export class SessionManager {
     session.audioBufferBytes += chunkBytes;
 
     if (session.audioBufferBytes >= AUDIO_BUFFER_THRESHOLD_BYTES && !session.processing) {
+      console.log(`[BELLA:TWILIO] Audio buffer threshold reached — callSid=${session.callSid} bufferBytes=${session.audioBufferBytes} chunks=${session.audioBuffer.length}`);
       this.flushAudioBuffer(session);
     }
   }
@@ -135,6 +142,7 @@ export class SessionManager {
   }
 
   handleStop(session: Session): void {
+    console.log(`[BELLA:TWILIO] Stream stop event — callSid=${session.callSid}`);
     logger.info({ callSid: session.callSid }, 'Stream stopped');
     this.endSession(session.callSid);
   }
@@ -150,6 +158,8 @@ export class SessionManager {
 
     session.markSequence++;
     const markName = `mark_${session.markSequence}`;
+    const audioSizeBytes = Math.ceil((base64Audio.length * 3) / 4);
+    console.log(`[BELLA:TWILIO] Queueing audio to Twilio — callSid=${session.callSid} audioSize=${audioSizeBytes}bytes mark=${markName} queueLen=${session.audioQueue.length + 1}`);
     session.audioQueue.push({ payload: base64Audio, markName });
   }
 
@@ -176,6 +186,8 @@ export class SessionManager {
     const session = this.sessions.get(callSid);
     if (!session) return;
 
+    const durationMs = Date.now() - session.startedAt.getTime();
+    console.log(`[BELLA:SESSION] Ending session — callSid=${callSid} sessionId=${session.id} status=${session.status} duration=${durationMs}ms turns=${session.conversationHistory.length}`);
     session.status = 'closed';
 
     if (session.audioQueueInterval) {
@@ -207,6 +219,7 @@ export class SessionManager {
 
   private async initializePipeline(session: Session): Promise<void> {
     try {
+      console.log(`[BELLA:SESSION] Initializing pipeline — callSid=${session.callSid} callerPhone=${session.callerPhone}`);
       const db = getDb();
 
       const [dbSession] = await db
@@ -219,10 +232,12 @@ export class SessionManager {
         .returning();
 
       session.dbSessionId = dbSession!.id;
+      console.log(`[BELLA:SESSION] DB session created — dbSessionId=${session.dbSessionId}`);
 
       const gemini = getGeminiClient();
       gemini.startChat();
       this.geminiClients.set(session.callSid, gemini);
+      console.log(`[BELLA:SESSION] Gemini chat session started — callSid=${session.callSid}`);
 
       const ctx: ToolContext = {
         sessionId: session.dbSessionId,
@@ -230,8 +245,10 @@ export class SessionManager {
       };
 
       if (session.callerPhone) {
+        console.log(`[BELLA:SESSION] Looking up customer — phone=${session.callerPhone}`);
         const lookupResult = await executeTool('lookup_customer', { phone: session.callerPhone }, ctx);
         const lookup = lookupResult as { found: boolean; customer?: { id: string; firstName: string } };
+        console.log(`[BELLA:SESSION] Customer lookup result — found=${lookup.found} customerId=${lookup.customer?.id || 'N/A'} name=${lookup.customer?.firstName || 'N/A'}`);
 
         if (lookup.found && lookup.customer) {
           session.customerId = lookup.customer.id;
@@ -248,18 +265,24 @@ export class SessionManager {
         ? `A returning customer is calling from ${session.callerPhone}. Greet them by name if possible and ask how you can help.`
         : `A new caller is calling from ${session.callerPhone || 'an unknown number'}. Greet them warmly and ask how you can help.`;
 
+      console.log(`[BELLA:SESSION] Requesting initial greeting from Gemini — isReturning=${!!session.customerId}`);
       const response = await gemini.chat(greeting);
       const text = response.text?.() || 'Hi there! This is Bella from SafeGuard Insurance. How can I help you today?';
+      console.log(`[BELLA:SESSION] Greeting response: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`);
 
       session.conversationHistory.push({ role: 'model', content: text });
       await this.saveTranscript(session, 'agent', text);
 
       const gradium = getGradiumClient();
+      console.log(`[BELLA:SESSION] Converting greeting to audio via TTS`);
       const audioBase64 = await gradium.textToSpeech(text);
+      console.log(`[BELLA:SESSION] TTS complete — audioSize=${Math.ceil((audioBase64.length * 3) / 4)}bytes`);
       this.sendAudioToTwilio(session, audioBase64);
 
+      console.log(`[BELLA:SESSION] Pipeline initialized successfully — callSid=${session.callSid}`);
       logger.info({ callSid: session.callSid }, 'Pipeline initialized with greeting');
     } catch (err) {
+      console.error(`[BELLA:SESSION] Pipeline init error — callSid=${session.callSid}`, err);
       logger.error({ err, callSid: session.callSid }, 'Pipeline init error');
     }
   }
@@ -267,9 +290,14 @@ export class SessionManager {
   private flushAudioBuffer(session: Session): void {
     if (session.audioBuffer.length === 0) return;
 
-    const combinedAudio = session.audioBuffer.join('');
+    const chunks = session.audioBuffer;
     session.audioBuffer = [];
     session.audioBufferBytes = 0;
+
+    const combinedAudio =
+      chunks.length === 1
+        ? chunks[0]!
+        : Buffer.concat(chunks.map(c => Buffer.from(c, 'base64'))).toString('base64');
 
     this.processConversationTurn(session, combinedAudio).catch((err) => {
       logger.error({ err, callSid: session.callSid }, 'Conversation turn failed');
@@ -279,12 +307,19 @@ export class SessionManager {
   private async processConversationTurn(session: Session, audioBase64: string): Promise<void> {
     if (session.processing || session.status !== 'active') return;
     session.processing = true;
+    const turnStart = Date.now();
 
     try {
+      const audioSizeBytes = Math.ceil((audioBase64.length * 3) / 4);
+      console.log(`[BELLA:SESSION] === Conversation turn start === callSid=${session.callSid} audioSize=${audioSizeBytes}bytes`);
+
       const gradium = getGradiumClient();
+      const sttStart = Date.now();
       const userText = await gradium.speechToText(audioBase64);
+      console.log(`[BELLA:STT] Transcription complete — text="${userText}" sttTime=${Date.now() - sttStart}ms`);
 
       if (!userText.trim()) {
+        console.log(`[BELLA:SESSION] Empty transcription, skipping turn — callSid=${session.callSid}`);
         session.processing = false;
         return;
       }
@@ -294,14 +329,19 @@ export class SessionManager {
 
       const gemini = this.geminiClients.get(session.callSid);
       if (!gemini) {
+        console.log(`[BELLA:SESSION] No Gemini client found, skipping — callSid=${session.callSid}`);
         session.processing = false;
         return;
       }
 
+      const llmStart = Date.now();
+      console.log(`[BELLA:LLM] Sending user message to Gemini: "${userText}"`);
       let response = await gemini.chat(userText);
+      console.log(`[BELLA:LLM] Gemini responded in ${Date.now() - llmStart}ms`);
 
       let functionCalls = response.functionCalls?.();
       while (functionCalls && functionCalls.length > 0) {
+        console.log(`[BELLA:LLM] Gemini requested ${functionCalls.length} tool call(s): ${functionCalls.map(fc => fc.name).join(', ')}`);
         const ctx: ToolContext = {
           sessionId: session.dbSessionId || session.id,
           callerPhone: session.callerPhone,
@@ -313,7 +353,10 @@ export class SessionManager {
 
         for (const fc of functionCalls) {
           const args = (fc.args || {}) as Record<string, unknown>;
+          console.log(`[BELLA:TOOL] Calling ${fc.name}(${JSON.stringify(args)})`);
+          const toolStart = Date.now();
           const result = await executeTool(fc.name, args, ctx);
+          console.log(`[BELLA:TOOL] ${fc.name} returned in ${Date.now() - toolStart}ms — result=${JSON.stringify(result).substring(0, 200)}`);
 
           session.conversationHistory.push({
             role: 'function',
@@ -334,19 +377,28 @@ export class SessionManager {
           toolResults.push({ name: fc.name, response: result });
         }
 
+        const toolReturnStart = Date.now();
+        console.log(`[BELLA:LLM] Sending ${toolResults.length} tool result(s) back to Gemini`);
         response = await gemini.sendToolResults(toolResults);
+        console.log(`[BELLA:LLM] Gemini processed tool results in ${Date.now() - toolReturnStart}ms`);
         functionCalls = response.functionCalls?.();
       }
 
       const agentText = response.text?.() || '';
       if (agentText) {
+        console.log(`[BELLA:LLM] Gemini response: "${agentText.substring(0, 150)}${agentText.length > 150 ? '...' : ''}"`);
         session.conversationHistory.push({ role: 'model', content: agentText });
         await this.saveTranscript(session, 'agent', agentText);
 
+        const ttsStart = Date.now();
         const ttsAudio = await gradium.textToSpeech(agentText);
+        console.log(`[BELLA:TTS] TTS complete — ttsTime=${Date.now() - ttsStart}ms audioSize=${Math.ceil((ttsAudio.length * 3) / 4)}bytes`);
         this.sendAudioToTwilio(session, ttsAudio);
       }
+
+      console.log(`[BELLA:SESSION] === Conversation turn end === callSid=${session.callSid} totalTime=${Date.now() - turnStart}ms`);
     } catch (err) {
+      console.error(`[BELLA:SESSION] Conversation turn error — callSid=${session.callSid} elapsed=${Date.now() - turnStart}ms`, err);
       logger.error({ err, callSid: session.callSid }, 'Conversation turn error');
     } finally {
       session.processing = false;
@@ -357,6 +409,7 @@ export class SessionManager {
     if (!session.dbSessionId) return;
 
     try {
+      console.log(`[BELLA:SESSION] Finalizing session — dbSessionId=${session.dbSessionId} historyLen=${session.conversationHistory.length}`);
       const db = getDb();
       const gemini = getGeminiClient();
 
@@ -367,6 +420,7 @@ export class SessionManager {
       const summary = historyText
         ? await gemini.generateSummary(historyText)
         : 'Call ended with no conversation.';
+      console.log(`[BELLA:SESSION] Summary generated: "${summary.substring(0, 150)}${summary.length > 150 ? '...' : ''}"`);
 
       await db
         .update(callSessions)
@@ -378,8 +432,10 @@ export class SessionManager {
         })
         .where(eq(callSessions.id, session.dbSessionId));
 
+      console.log(`[BELLA:SESSION] Session finalized in DB — dbSessionId=${session.dbSessionId} claimId=${session.claimId || 'none'}`);
       logger.info({ sessionId: session.dbSessionId }, 'Session finalized');
     } catch (err) {
+      console.error(`[BELLA:SESSION] Finalization error — dbSessionId=${session.dbSessionId}`, err);
       logger.error({ err, sessionId: session.dbSessionId }, 'Finalization error');
     }
   }

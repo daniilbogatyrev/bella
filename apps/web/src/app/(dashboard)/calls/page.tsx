@@ -4,6 +4,7 @@ import { callSessions, customers, callStatusEnum } from '@bella/db';
 import { eq, ilike, desc, or, type SQL } from 'drizzle-orm';
 import { formatDate, formatDuration, formatPhone } from '@/lib/format';
 import { Phone } from 'lucide-react';
+import { TestCallDialog } from '@/components/calls/test-call-dialog';
 import {
   Table,
   TableBody,
@@ -101,11 +102,14 @@ export default async function CallsPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Calls</h1>
-        <p className="text-muted-foreground">
-          Call history and session recordings
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-3xl font-bold tracking-tight">Calls</h1>
+          <p className="text-muted-foreground">
+            Call history and session recordings
+          </p>
+        </div>
+        <TestCallDialog />
       </div>
 
       {/* Filters */}
@@ -141,7 +145,7 @@ export default async function CallsPage({
       {callRows.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16 text-center">
           <Phone className="size-10 text-muted-foreground/50 mb-3" />
-          <h3 className="text-lg font-medium">No calls found</h3>
+          <h3 className="font-display text-lg font-medium">No calls found</h3>
           <p className="text-sm text-muted-foreground mt-1">
             {query || statusFilter
               ? 'Try adjusting your search or filter.'

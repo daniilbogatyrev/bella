@@ -3,6 +3,7 @@
   "private": true,
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
+    "dev": "bun run dev.ts",
     "dev:ws": "bun run --filter ws-server dev",
     "dev:web": "bun run --filter web dev",
     "build": "bun run --filter '*' build",
@@ -10,5 +11,10 @@
     "db:generate": "bun run --filter @bella/db generate",
     "db:migrate": "bun run --filter @bella/db migrate",
     "db:seed": "bun run --filter @bella/db seed"
+  },
+  "devDependencies": {
+    "@ngrok/ngrok": "^1.7.0",
+    "dotenv": "^17.4.2",
+    "typescript": "^6.0.3"
   }
 }
