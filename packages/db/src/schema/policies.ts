@@ -12,5 +12,7 @@ export const policies = pgTable('policies', {
   startDate: date('start_date').notNull(),
   endDate: date('end_date'),
   details: jsonb('details'),
+  coveredItems: text('covered_items'),
+  notCoveredItems: text('not_covered_items'),
   createdAt: timestamp('created_at', { mode: 'date' }).defaultNow().notNull(),
 });

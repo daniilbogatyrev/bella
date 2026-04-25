@@ -3,14 +3,13 @@ import { getAvailableTools, executeTool, type ToolContext } from '../tools';
 
 describe('Tools', () => {
   describe('getAvailableTools', () => {
-    it('returns an array of 7 tool names', () => {
+    it('returns an array of 6 tool names', () => {
       const tools = getAvailableTools();
-      expect(tools).toHaveLength(7);
+      expect(tools).toHaveLength(6);
     });
 
     it('includes all required tool names', () => {
       const tools = getAvailableTools();
-      expect(tools).toContain('lookup_customer');
       expect(tools).toContain('get_policies');
       expect(tools).toContain('open_claim');
       expect(tools).toContain('log_fact');
@@ -50,7 +49,7 @@ describe('Tools', () => {
       delete process.env.DATABASE_URL;
 
       try {
-        const result = await executeTool('lookup_customer', { phone: '+15551234567' }, ctx);
+        const result = await executeTool('get_policies', { customerId: 'test-id' }, ctx);
         expect(result).toHaveProperty('error', true);
         expect((result as { message: string }).message).toContain('failed');
       } finally {

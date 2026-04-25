@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { getDb, customers, policies, claims, claimEvents, evidence } from '@bella/db';
+import { getDb, policies, claims, claimEvents, evidence } from '@bella/db';
 import pino from 'pino';
 
 const logger = pino({ name: 'bella-tools' });
@@ -14,45 +14,6 @@ export interface ToolContext {
 type ToolHandler = (args: Record<string, unknown>, ctx: ToolContext) => Promise<object>;
 
 const toolHandlers: Record<string, ToolHandler> = {
-  lookup_customer: async (args, _ctx) => {
-    const phone = args.phone as string;
-    console.log(`[BELLA:TOOL] lookup_customer — phone=${phone}`);
-    const db = getDb();
-
-    const customer = await db.query.customers.findFirst({
-      where: eq(customers.phone, phone),
-      with: { policies: true },
-    });
-
-    if (!customer) {
-      console.log(`[BELLA:TOOL] lookup_customer — no customer found for phone=${phone}`);
-      logger.info({ phone }, 'Customer not found');
-      return { found: false, message: `No customer found for phone ${phone}` };
-    }
-
-    console.log(`[BELLA:TOOL] lookup_customer — found customerId=${customer.id} name=${customer.firstName} ${customer.lastName} policies=${customer.policies.length}`);
-    logger.info({ customerId: customer.id, phone }, 'Customer found');
-    return {
-      found: true,
-      customer: {
-        id: customer.id,
-        firstName: customer.firstName,
-        lastName: customer.lastName,
-        phone: customer.phone,
-        email: customer.email,
-        address: customer.address,
-      },
-      policies: customer.policies.map((p) => ({
-        id: p.id,
-        type: p.type,
-        planName: p.planName,
-        status: p.status,
-        startDate: p.startDate,
-        endDate: p.endDate,
-      })),
-    };
-  },
-
   get_policies: async (args) => {
     const customerId = args.customerId as string;
     console.log(`[BELLA:TOOL] get_policies — customerId=${customerId}`);
@@ -74,6 +35,8 @@ const toolHandlers: Record<string, ToolHandler> = {
         startDate: p.startDate,
         endDate: p.endDate,
         details: p.details,
+        coveredItems: p.coveredItems,
+        notCoveredItems: p.notCoveredItems,
       })),
     };
   },

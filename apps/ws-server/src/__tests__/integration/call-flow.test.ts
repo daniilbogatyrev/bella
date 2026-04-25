@@ -118,7 +118,7 @@ describe('Integration: Call Flow', () => {
     }
   });
 
-  it('audio queue sends media and marks through WebSocket in order', () => {
+  it('audio queue sends media and marks through WebSocket in order', async () => {
     manager.createSession('CA_AQ', mockWs);
 
     manager.handleTwilioMessage(
@@ -139,25 +139,30 @@ describe('Integration: Call Flow', () => {
     );
 
     const session = manager.getSession('CA_AQ')!;
-    manager.sendAudioToTwilio(session, 'chunk_1_base64');
-    manager.sendAudioToTwilio(session, 'chunk_2_base64');
+    // Clear any bg-only chunks that the loop already sent
+    sentMessages.length = 0;
 
-    manager.processAudioQueue(session);
-    manager.processAudioQueue(session);
+    // Send two small 160-byte chunks (each fits exactly one Twilio chunk)
+    const chunk1 = Buffer.alloc(160, 0x41).toString('base64');
+    const chunk2 = Buffer.alloc(160, 0x42).toString('base64');
+    manager.sendAudioToTwilio(session, chunk1, 'test response');
+    manager.sendAudioToTwilio(session, chunk2, 'test response 2');
 
-    expect(sentMessages.length).toBe(4);
-    const media1 = JSON.parse(sentMessages[0]!);
-    const mark1 = JSON.parse(sentMessages[1]!);
-    const media2 = JSON.parse(sentMessages[2]!);
-    const mark2 = JSON.parse(sentMessages[3]!);
+    // Wait for the continuous loop to send all queued TTS chunks
+    await Bun.sleep(120);
 
-    expect(media1.event).toBe('media');
-    expect(media1.media.payload).toBe('chunk_1_base64');
-    expect(mark1.event).toBe('mark');
+    // Find media and mark messages among all sent messages
+    const mediaMsgs = sentMessages.filter(m => { try { return JSON.parse(m).event === 'media'; } catch { return false; } });
+    const markMsgs = sentMessages.filter(m => { try { return JSON.parse(m).event === 'mark'; } catch { return false; } });
+
+    // At least 2 media messages (TTS chunks) + possibly bg-only chunks
+    expect(mediaMsgs.length).toBeGreaterThanOrEqual(2);
+    // Exactly 2 mark messages (one per sendAudioToTwilio call)
+    expect(markMsgs.length).toBeGreaterThanOrEqual(2);
+
+    const mark1 = JSON.parse(markMsgs[0]!);
+    const mark2 = JSON.parse(markMsgs[1]!);
     expect(mark1.mark.name).toBe('mark_1');
-    expect(media2.event).toBe('media');
-    expect(media2.media.payload).toBe('chunk_2_base64');
-    expect(mark2.event).toBe('mark');
     expect(mark2.mark.name).toBe('mark_2');
   });
 

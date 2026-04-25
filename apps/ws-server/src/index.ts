@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 import { createBunWebSocket } from 'hono/bun';
 import { generateStreamTwiML } from './twilio';
 import { SessionManager } from './session';
+import { getSTTProviderName } from './stt';
+import { getLLMProviderName } from './llm';
 
 const { upgradeWebSocket, websocket } = createBunWebSocket();
 
@@ -92,6 +94,11 @@ app.get(
 const port = Number(process.env.PORT) || 8080;
 
 console.log(`🔔 Bella WS Server starting on port ${port}`);
+console.log(`[BELLA:CONFIG] STT provider: ${getSTTProviderName()}`);
+console.log(`[BELLA:CONFIG] LLM provider: ${getLLMProviderName()}`);
+const bgEnabled = process.env.BG_NOISE_ENABLED !== 'false';
+const bgGain = parseFloat(process.env.BG_NOISE_GAIN || '0.04') || 0.04;
+console.log(`[BELLA:CONFIG] Background noise: ${bgEnabled ? 'enabled' : 'disabled'} (gain=${bgGain})`);
 
 export { app, sessionManager };
 

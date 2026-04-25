@@ -2,7 +2,6 @@ import { describe, it, expect } from 'bun:test';
 import { getAvailableTools, executeTool, type ToolContext } from '../../tools';
 
 const REQUIRED_TOOLS = [
-  'lookup_customer',
   'get_policies',
   'open_claim',
   'log_fact',
@@ -17,12 +16,12 @@ describe('Integration: Agent Tools', () => {
     callerPhone: '+15551234567',
   };
 
-  it('has all 7 required tools', () => {
+  it('has all 6 required tools', () => {
     const tools = getAvailableTools();
     for (const name of REQUIRED_TOOLS) {
       expect(tools).toContain(name);
     }
-    expect(tools.length).toBe(7);
+    expect(tools.length).toBe(6);
   });
 
   it('returns error for unknown tool', async () => {
@@ -63,7 +62,7 @@ describe('Integration: Agent Tools', () => {
     delete process.env.DATABASE_URL;
 
     try {
-      const result = await executeTool('lookup_customer', { phone: '+15551234567' }, ctx);
+      const result = await executeTool('get_policies', { customerId: 'test-id' }, ctx);
       expect(result).toHaveProperty('error', true);
       expect((result as { message: string }).message).toContain('failed');
     } finally {

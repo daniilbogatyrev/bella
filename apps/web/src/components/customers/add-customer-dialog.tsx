@@ -14,17 +14,35 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { PlusIcon } from 'lucide-react';
+import { PlusIcon, CheckIcon } from 'lucide-react';
 import { createCustomer } from '@/app/(dashboard)/customers/actions';
 
 const E164_REGEX = /^\+[1-9]\d{1,14}$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const POLICY_TYPES = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'health', label: 'Health' },
+  { value: 'home', label: 'Home' },
+  { value: 'life', label: 'Life' },
+  { value: 'travel', label: 'Travel' },
+  { value: 'liability', label: 'Liability' },
+] as const;
+
+type PolicyType = (typeof POLICY_TYPES)[number]['value'];
 
 export function AddCustomerDialog() {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState('');
+  const [selectedPolicies, setSelectedPolicies] = useState<PolicyType[]>([]);
+
+  function togglePolicy(type: PolicyType) {
+    setSelectedPolicies((prev) =>
+      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type],
+    );
+  }
 
   function validate(form: FormData): Record<string, string> {
     const errs: Record<string, string> = {};
@@ -59,10 +77,12 @@ export function AddCustomerDialog() {
         dob: (form.get('dob') as string) || undefined,
         email: (form.get('email') as string) || undefined,
         address: (form.get('address') as string) || undefined,
+        policyTypes: selectedPolicies.length > 0 ? selectedPolicies : undefined,
       });
       if (result.success) {
         setOpen(false);
         setErrors({});
+        setSelectedPolicies([]);
       } else {
         setServerError(result.error ?? 'Failed to create customer');
       }
@@ -117,6 +137,32 @@ export function AddCustomerDialog() {
           <div className="grid gap-1.5">
             <Label htmlFor="address">Address</Label>
             <Textarea id="address" name="address" placeholder="123 Main St, City, State" rows={2} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label>Policies</Label>
+            <div className="flex flex-wrap gap-2">
+              {POLICY_TYPES.map((pt) => {
+                const isSelected = selectedPolicies.includes(pt.value);
+                return (
+                  <button
+                    key={pt.value}
+                    type="button"
+                    onClick={() => togglePolicy(pt.value)}
+                    className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                      isSelected
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-input text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                    }`}
+                  >
+                    {isSelected && <CheckIcon className="size-3" />}
+                    {pt.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Select policies to create for this customer. Each will start today with a 1-year term.
+            </p>
           </div>
           <DialogFooter>
             <Button type="submit" disabled={isPending}>

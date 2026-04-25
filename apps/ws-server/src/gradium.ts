@@ -148,12 +148,17 @@ export class GradiumClient {
     console.log(`[BELLA:STT] Received ${audioSizeBytes} bytes mulaw audio, converting to PCM 24kHz for Gradium STT`);
     const start = Date.now();
 
-    const pcm24kBuf = mulawToLinear24k(audioBase64);
+    let pcm24kBuf = mulawToLinear24k(audioBase64);
     const expectedPcmBytes = audioSizeBytes * 6;
     if (pcm24kBuf.length !== expectedPcmBytes) {
       console.error(`[BELLA:STT] BUG: Expected ${expectedPcmBytes} PCM bytes, got ${pcm24kBuf.length}`);
     }
     console.log(`[BELLA:STT] Converted to PCM 24kHz — pcmSize=${pcm24kBuf.length}bytes elapsed=${Date.now() - start}ms`);
+
+    if (process.env.AI_COUSTIC_ENABLED !== 'false' && process.env.AI_COUSTIC) {
+      const { enhanceAudio } = await import('./aicoustics');
+      pcm24kBuf = await enhanceAudio(pcm24kBuf);
+    }
 
     const wsUrl = toWsUrl(this.config.baseUrl, '/api/speech/asr');
     const model = this.config.sttModel || 'default';
@@ -314,9 +319,9 @@ export class GradiumClient {
         try {
           const raw = typeof event.data === 'string' ? event.data : String(event.data);
           const msg = JSON.parse(raw);
-          console.log(`[BELLA:TTS] ← ${msg.type}${msg.type === 'ready' ? ` request_id=${msg.request_id}` : ''}${msg.type === 'audio' ? ` audioLen=${msg.audio?.length ?? 0}` : ''}${msg.type === 'error' ? ` message="${msg.message}" code=${msg.code}` : ''}`);
 
           if (msg.type === 'ready') {
+            console.log(`[BELLA:TTS] ← ready request_id=${msg.request_id}`);
             console.log(`[BELLA:TTS] Server ready — sending text`);
             ws.send(JSON.stringify({ type: 'text', text }));
             ws.send(JSON.stringify({ type: 'end_of_stream' }));

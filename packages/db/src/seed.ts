@@ -79,6 +79,8 @@ async function seed() {
         deductible: 500,
         coverageLimit: 100000,
       },
+      coveredItems: 'Collision damage, liability, medical payments, uninsured motorist, roadside assistance, rental car reimbursement',
+      notCoveredItems: 'Wear & tear, mechanical breakdown, personal belongings in car, commercial use',
     })
     .returning();
 
@@ -98,6 +100,8 @@ async function seed() {
         deductible: 1000,
         coverageLimit: 350000,
       },
+      coveredItems: 'Dwelling structure, personal property, liability, additional living expenses, fire/theft/vandalism',
+      notCoveredItems: 'Flood damage, earthquake, normal wear, pest damage, home business equipment',
     })
     .returning();
 
@@ -118,6 +122,8 @@ async function seed() {
         deductible: 1000,
         coverageLimit: 50000,
       },
+      coveredItems: 'Collision damage, liability, medical payments, uninsured motorist, roadside assistance, rental car reimbursement',
+      notCoveredItems: 'Wear & tear, mechanical breakdown, personal belongings in car, commercial use',
     })
     .returning();
 
@@ -131,6 +137,8 @@ async function seed() {
       premium: '450.00',
       startDate: '2024-01-01',
       endDate: '2024-12-31',
+      coveredItems: 'Hospitalization, surgery, prescription drugs, preventive care, mental health services, emergency room visits',
+      notCoveredItems: 'Cosmetic procedures, experimental treatments, dental (separate plan), vision (separate plan)',
     })
     .returning();
 

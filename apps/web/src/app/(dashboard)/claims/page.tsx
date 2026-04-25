@@ -10,6 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { NewClaimDialog } from '@/components/claims/new-claim-dialog';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
@@ -103,11 +104,14 @@ export default async function ClaimsPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="font-display text-3xl font-bold tracking-tight">Claims</h1>
-        <p className="text-muted-foreground">
-          Manage and track insurance claims
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="font-display text-3xl font-bold tracking-tight">Claims</h1>
+          <p className="text-muted-foreground">
+            Manage and track insurance claims
+          </p>
+        </div>
+        <NewClaimDialog />
       </div>
 
       {/* Filters */}

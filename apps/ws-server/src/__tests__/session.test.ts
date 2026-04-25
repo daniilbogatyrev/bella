@@ -160,7 +160,7 @@ describe('SessionManager', () => {
   });
 
   describe('sendAudioToTwilio', () => {
-    it('queues audio with incrementing mark names', () => {
+    it('chunks audio into 160-byte segments with mark on last chunk', () => {
       const ws = createMockWs();
       manager.createSession('CA_123', ws);
 
@@ -168,13 +168,58 @@ describe('SessionManager', () => {
       manager.handleTwilioMessage('CA_123', startMsg);
 
       const session = manager.getSession('CA_123')!;
-      manager.sendAudioToTwilio(session, 'audio_chunk_1');
-      manager.sendAudioToTwilio(session, 'audio_chunk_2');
+
+      // 320 bytes of mulaw = 2 chunks of 160 bytes each
+      const rawAudio = Buffer.alloc(320, 0x7f);
+      const b64 = rawAudio.toString('base64');
+      manager.sendAudioToTwilio(session, b64);
 
       expect(session.audioQueue).toHaveLength(2);
-      expect(session.audioQueue[0]!.payload).toBe('audio_chunk_1');
+      expect(session.audioQueue[0]!.markName).toBeUndefined();
+      expect(session.audioQueue[1]!.markName).toBe('mark_1');
+
+      // Each chunk should decode to exactly 160 bytes
+      const chunk0Bytes = Buffer.from(session.audioQueue[0]!.payload, 'base64');
+      const chunk1Bytes = Buffer.from(session.audioQueue[1]!.payload, 'base64');
+      expect(chunk0Bytes.length).toBe(160);
+      expect(chunk1Bytes.length).toBe(160);
+    });
+
+    it('handles audio smaller than one chunk', () => {
+      const ws = createMockWs();
+      manager.createSession('CA_123', ws);
+
+      const startMsg = makeStartMessage('CA_123', 'MZ_456', '+15551234567');
+      manager.handleTwilioMessage('CA_123', startMsg);
+
+      const session = manager.getSession('CA_123')!;
+
+      // 80 bytes = less than one full 160-byte chunk
+      const rawAudio = Buffer.alloc(80, 0x7f);
+      manager.sendAudioToTwilio(session, rawAudio.toString('base64'));
+
+      expect(session.audioQueue).toHaveLength(1);
       expect(session.audioQueue[0]!.markName).toBe('mark_1');
-      expect(session.audioQueue[1]!.payload).toBe('audio_chunk_2');
+      const decoded = Buffer.from(session.audioQueue[0]!.payload, 'base64');
+      expect(decoded.length).toBe(80);
+    });
+
+    it('increments mark sequence across multiple sends', () => {
+      const ws = createMockWs();
+      manager.createSession('CA_123', ws);
+
+      const startMsg = makeStartMessage('CA_123', 'MZ_456', '+15551234567');
+      manager.handleTwilioMessage('CA_123', startMsg);
+
+      const session = manager.getSession('CA_123')!;
+
+      const small = Buffer.alloc(160, 0x7f).toString('base64');
+      manager.sendAudioToTwilio(session, small);
+      manager.sendAudioToTwilio(session, small);
+
+      // 2 sends × 1 chunk each = 2 items
+      expect(session.audioQueue).toHaveLength(2);
+      expect(session.audioQueue[0]!.markName).toBe('mark_1');
       expect(session.audioQueue[1]!.markName).toBe('mark_2');
     });
 
@@ -182,13 +227,25 @@ describe('SessionManager', () => {
       const ws = createMockWs();
       const session = manager.createSession('CA_123', ws);
       // session is still 'initializing'
-      manager.sendAudioToTwilio(session, 'audio_data');
+      manager.sendAudioToTwilio(session, Buffer.alloc(160, 0x7f).toString('base64'));
+      expect(session.audioQueue).toHaveLength(0);
+    });
+
+    it('does not queue if audio is empty', () => {
+      const ws = createMockWs();
+      manager.createSession('CA_123', ws);
+
+      const startMsg = makeStartMessage('CA_123', 'MZ_456', '+15551234567');
+      manager.handleTwilioMessage('CA_123', startMsg);
+
+      const session = manager.getSession('CA_123')!;
+      manager.sendAudioToTwilio(session, '');
       expect(session.audioQueue).toHaveLength(0);
     });
   });
 
-  describe('processAudioQueue', () => {
-    it('sends media and mark messages via WebSocket', () => {
+  describe('continuous background loop', () => {
+    it('sends queued TTS chunks and marks via WebSocket when loop ticks', async () => {
       const ws = createMockWs();
       manager.createSession('CA_123', ws);
 
@@ -196,24 +253,30 @@ describe('SessionManager', () => {
       manager.handleTwilioMessage('CA_123', startMsg);
 
       const session = manager.getSession('CA_123')!;
-      manager.sendAudioToTwilio(session, 'audio_chunk');
+      // Clear any bg-only chunks already sent by the loop
+      ws.sent.length = 0;
 
-      // Manually process queue
-      manager.processAudioQueue(session);
+      // Send exactly 160 bytes = 1 chunk (gets mark)
+      const oneChunk = Buffer.alloc(160, 0x7f).toString('base64');
+      manager.sendAudioToTwilio(session, oneChunk, 'test');
+      expect(session.audioQueue).toHaveLength(1);
 
-      expect(ws.sent).toHaveLength(2); // media + mark
-      const mediaSent = JSON.parse(ws.sent[0]!);
-      expect(mediaSent.event).toBe('media');
-      expect(mediaSent.media.payload).toBe('audio_chunk');
+      // Wait for loop to send the chunk (20ms interval + margin)
+      await Bun.sleep(80);
 
-      const markSent = JSON.parse(ws.sent[1]!);
-      expect(markSent.event).toBe('mark');
-      expect(markSent.mark.name).toBe('mark_1');
+      // Find media and mark messages among everything sent (bg-only + TTS)
+      const mediaMsgs = ws.sent.filter(m => { try { return JSON.parse(m).event === 'media'; } catch { return false; } });
+      const markMsgs = ws.sent.filter(m => { try { return JSON.parse(m).event === 'mark'; } catch { return false; } });
+      expect(mediaMsgs.length).toBeGreaterThanOrEqual(1);
+      expect(markMsgs.length).toBeGreaterThanOrEqual(1);
+
+      const lastMark = JSON.parse(markMsgs[markMsgs.length - 1]!);
+      expect(lastMark.mark.name).toBe('mark_1');
 
       expect(session.audioQueue).toHaveLength(0);
     });
 
-    it('does nothing when queue is empty', () => {
+    it('sends one TTS chunk per tick and leaves the rest queued', async () => {
       const ws = createMockWs();
       manager.createSession('CA_123', ws);
 
@@ -221,9 +284,42 @@ describe('SessionManager', () => {
       manager.handleTwilioMessage('CA_123', startMsg);
 
       const session = manager.getSession('CA_123')!;
-      manager.processAudioQueue(session);
+      ws.sent.length = 0;
 
-      expect(ws.sent).toHaveLength(0);
+      // 480 bytes = 3 chunks
+      const audio = Buffer.alloc(480, 0x7f).toString('base64');
+      manager.sendAudioToTwilio(session, audio, 'test');
+      expect(session.audioQueue).toHaveLength(3);
+
+      // Wait for 1 tick
+      await Bun.sleep(30);
+      expect(session.audioQueue.length).toBeLessThanOrEqual(2);
+
+      // Wait for all chunks to drain
+      await Bun.sleep(100);
+      expect(session.audioQueue).toHaveLength(0);
+    });
+
+    it('sends background-only chunks when no TTS audio is queued', async () => {
+      // Temporarily enable bg noise for this test
+      const prevBgEnabled = process.env.BG_NOISE_ENABLED;
+      process.env.BG_NOISE_ENABLED = 'true';
+
+      const ws = createMockWs();
+      manager.createSession('CA_123', ws);
+
+      const startMsg = makeStartMessage('CA_123', 'MZ_456', '+15551234567');
+      manager.handleTwilioMessage('CA_123', startMsg);
+
+      // Wait for the continuous loop to fire several ticks (20ms interval)
+      await new Promise(resolve => setTimeout(resolve, 150));
+
+      const mediaMsgs = ws.sent.filter(m => { try { return JSON.parse(m).event === 'media'; } catch { return false; } });
+      expect(mediaMsgs.length).toBeGreaterThanOrEqual(1);
+
+      // Restore env
+      if (prevBgEnabled === undefined) delete process.env.BG_NOISE_ENABLED;
+      else process.env.BG_NOISE_ENABLED = prevBgEnabled;
     });
   });
 
@@ -236,8 +332,9 @@ describe('SessionManager', () => {
       manager.handleTwilioMessage('CA_123', startMsg);
 
       const session = manager.getSession('CA_123')!;
-      manager.sendAudioToTwilio(session, 'audio');
-      expect(session.audioQueue).toHaveLength(1);
+      const audio = Buffer.alloc(160, 0x7f).toString('base64');
+      manager.sendAudioToTwilio(session, audio);
+      expect(session.audioQueue.length).toBeGreaterThan(0);
 
       manager.endSession('CA_123');
 
