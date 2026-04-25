@@ -1,0 +1,14 @@
+{
+  "name": "bella",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:ws": "bun run --filter ws-server dev",
+    "dev:web": "bun run --filter web dev",
+    "build": "bun run --filter '*' build",
+    "test": "bun run --filter '*' test",
+    "db:generate": "bun run --filter @bella/db generate",
+    "db:migrate": "bun run --filter @bella/db migrate",
+    "db:seed": "bun run --filter @bella/db seed"
+  }
+}

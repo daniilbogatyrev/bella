@@ -1,0 +1,24 @@
+{
+  "name": "ws-server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --hot src/index.ts",
+    "start": "bun run src/index.ts",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "@bella/db": "workspace:*",
+    "@google/generative-ai": "^0.24.0",
+    "drizzle-orm": "^0.39.0",
+    "twilio": "^5.4.0",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}
