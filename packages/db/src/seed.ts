@@ -1,5 +1,6 @@
 import { getDb } from './client';
 import { adminUsers, customers, policies, claims, claimEvents, callSessions, transcripts, evidence } from './schema';
+import { hashPassword } from './password';
 
 async function seed() {
   const db = getDb();
@@ -17,10 +18,23 @@ async function seed() {
   await db.delete(adminUsers);
   console.log('🗑️  Cleared existing data');
 
-  const defaultPasswordHash = await Bun.password.hash('123456789');
+  const seedPassword = process.env.SEED_PASSWORD!;
+
+  if(!seedPassword){
+    throw new Error(`SEED_PASSWORD not defined`)
+  }
+
+  const defaultPasswordHash = await hashPassword(seedPassword);
   await db.insert(adminUsers).values({
     email: 'idevsubham@gmail.com',
     name: 'Subham',
+    role: 'admin',
+    passwordHash: defaultPasswordHash,
+  });
+
+  await db.insert(adminUsers).values({
+    email: 'daniil.bogatyrev25@gmail.com',
+    name: 'Daniil',
     role: 'admin',
     passwordHash: defaultPasswordHash,
   });

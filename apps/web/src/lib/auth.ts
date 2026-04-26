@@ -1,7 +1,7 @@
 import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import { getDb } from '@/lib/db';
-import { adminUsers } from '@bella/db';
+import { adminUsers, verifyPassword } from '@bella/db';
 import { eq } from 'drizzle-orm';
 import { authConfig } from './auth.config';
 
@@ -34,7 +34,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           throw new Error('NoPassword');
         }
 
-        const valid = await Bun.password.verify(password, admin.passwordHash);
+        const valid = await verifyPassword(password, admin.passwordHash);
         if (!valid) return null;
 
         return {

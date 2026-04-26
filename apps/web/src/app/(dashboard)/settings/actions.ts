@@ -1,7 +1,7 @@
 'use server';
 
 import { getDb } from '@/lib/db';
-import { adminUsers } from '@bella/db';
+import { adminUsers, hashPassword, verifyPassword } from '@bella/db';
 import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/lib/auth';
@@ -124,7 +124,7 @@ export async function setPassword(
     }
 
     if (admin.passwordHash && currentPassword) {
-      const valid = await Bun.password.verify(currentPassword, admin.passwordHash);
+      const valid = await verifyPassword(currentPassword, admin.passwordHash);
       if (!valid) {
         return { success: false, error: 'Current password is incorrect' };
       }
@@ -132,7 +132,7 @@ export async function setPassword(
       return { success: false, error: 'Current password is required' };
     }
 
-    const hash = await Bun.password.hash(newPassword);
+    const hash = await hashPassword(newPassword);
 
     await db
       .update(adminUsers)
