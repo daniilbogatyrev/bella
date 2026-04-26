@@ -383,6 +383,297 @@ export class GradiumClient {
   }
 }
 
+/**
+ * TTS abstraction that maintains a persistent WebSocket to Gradium.
+ *
+ * One TCP+TLS+WS connection is opened via `connect()` and reused for all
+ * `synthesize()` calls within a call session. Setup is sent before each
+ * synthesis (Gradium resets its internal session after every `end_of_stream`),
+ * but the underlying transport stays open — avoiding the ~200ms handshake
+ * overhead on every turn.
+ *
+ * If the server drops the connection between calls, `synthesize()` detects
+ * the stale socket and transparently reconnects before proceeding.
+ *
+ * Important protocol notes (learned from production):
+ * - Do NOT send `client_req_id` on any message — causes "Session not found"
+ * - Do NOT send `close_ws_on_eos` — let the server decide; detect + reconnect
+ *   if it closes the socket after a synthesis
+ *
+ * @example
+ * ```ts
+ * const stream = new GradiumTTSStream(config);
+ * await stream.connect();                     // opens persistent WS
+ * const audio1 = await stream.synthesize('Hello!');          // reuses WS
+ * const audio2 = await stream.synthesize('How can I help?'); // reuses WS
+ * stream.close();                             // tears down WS
+ * ```
+ */
+export class GradiumTTSStream {
+  private config: GradiumConfig;
+  private closed = false;
+  private requestCounter = 0;
+
+  /** The persistent WebSocket kept open across synthesize() calls. */
+  private ws: WebSocket | null = null;
+
+  /** Timeout handle for the currently in-flight synthesis. */
+  private synthTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(config: GradiumConfig) {
+    this.config = config;
+  }
+
+  /**
+   * Open the persistent WebSocket connection to Gradium TTS.
+   *
+   * Establishes the TCP+TLS+WS handshake once. Does NOT send a setup message
+   * — that happens at the start of each `synthesize()` call.
+   *
+   * Safe to call multiple times; subsequent calls reconnect if the socket is
+   * no longer open.
+   */
+  async connect(): Promise<void> {
+    if (!this.config.apiKey) {
+      throw new Error('GradiumTTSStream: apiKey is required');
+    }
+    this.closed = false;
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      console.log(`[BELLA:TTS-STREAM] Already connected (persistent)`);
+      return;
+    }
+
+    await this.openWebSocket();
+  }
+
+  /**
+   * Open a new WebSocket and wait for the `open` event.
+   * Replaces any existing socket reference.
+   */
+  private openWebSocket(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const wsUrl = toWsUrl(this.config.baseUrl, '/api/speech/tts');
+      console.log(`[BELLA:TTS-STREAM] Connecting to ${wsUrl}`);
+
+      const ws = new WebSocket(wsUrl, {
+        headers: { 'x-api-key': this.config.apiKey },
+      } as any);
+
+      const connectTimeout = setTimeout(() => {
+        ws.close();
+        reject(new Error('GradiumTTSStream: connection timeout'));
+      }, 10_000);
+
+      ws.onopen = () => {
+        clearTimeout(connectTimeout);
+        this.ws = ws;
+        console.log(`[BELLA:TTS-STREAM] Connected (persistent)`);
+        resolve();
+      };
+
+      ws.onerror = (event: Event) => {
+        clearTimeout(connectTimeout);
+        const errMsg = 'message' in event ? String((event as ErrorEvent).message) : 'WebSocket connection failed';
+        console.error(`[BELLA:TTS-STREAM] Connection error — ${errMsg}`);
+        reject(new Error(`GradiumTTSStream: connection error: ${errMsg}`));
+      };
+
+      ws.onclose = (event: CloseEvent) => {
+        clearTimeout(connectTimeout);
+        if (this.ws === ws) {
+          this.ws = null;
+        }
+        console.log(`[BELLA:TTS-STREAM] WebSocket closed — code=${event.code} reason="${event.reason}"`);
+      };
+    });
+  }
+
+  /** Check whether the persistent WebSocket is currently open. */
+  private isWsOpen(): boolean {
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+
+  /**
+   * Ensure the persistent WebSocket is open, reconnecting if necessary.
+   * Returns the live socket.
+   */
+  private async ensureConnected(): Promise<WebSocket> {
+    if (this.isWsOpen()) return this.ws!;
+
+    console.log(`[BELLA:TTS-STREAM] Reconnecting...`);
+    await this.openWebSocket();
+    return this.ws!;
+  }
+
+  /**
+   * Synthesize text to base64-encoded mulaw 8 kHz audio.
+   *
+   * Reuses the persistent WebSocket. Sends setup → waits for ready →
+   * sends text + end_of_stream → collects audio chunks until the server
+   * replies with its own `end_of_stream`. Does NOT close the socket
+   * afterward — it stays open for the next call.
+   *
+   * Only one synthesis can be in flight at a time.
+   *
+   * @param text - Text to synthesize
+   * @returns Base64-encoded mulaw 8 kHz audio ready for Twilio
+   */
+  async synthesize(text: string): Promise<string> {
+    if (this.closed) throw new Error('GradiumTTSStream: stream is closed');
+
+    this.requestCounter++;
+    const reqId = `tts-${this.requestCounter}`;
+    const start = Date.now();
+    const voice = this.config.ttsVoice || 'YTpq7expH9539ERJ';
+    const model = this.config.ttsModel || 'default';
+
+    console.log(`[BELLA:TTS-STREAM] Synthesizing — reqId=${reqId} (reusing connection) textLen=${text.length} text="${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`);
+
+    const ws = await this.ensureConnected();
+
+    return new Promise<string>((resolve, reject) => {
+      const audioChunks: string[] = [];
+      let settled = false;
+
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        if (this.synthTimeout) {
+          clearTimeout(this.synthTimeout);
+          this.synthTimeout = null;
+        }
+        // Restore the idle onmessage/onerror/onclose handlers
+        this.installIdleHandlers(ws);
+      };
+
+      this.synthTimeout = setTimeout(() => {
+        if (!settled) {
+          settle();
+          console.error(`[BELLA:TTS-STREAM] Synthesis timeout — reqId=${reqId} elapsed=${Date.now() - start}ms`);
+          reject(new Error(`GradiumTTSStream: synthesis timeout after ${TTS_TIMEOUT_MS}ms`));
+        }
+      }, TTS_TIMEOUT_MS);
+
+      ws.onmessage = (event: MessageEvent) => {
+        if (settled) return;
+        try {
+          const raw = typeof event.data === 'string' ? event.data : String(event.data);
+          const msg = JSON.parse(raw);
+
+          if (msg.type === 'ready') {
+            console.log(`[BELLA:TTS-STREAM] ← ready — reqId=${reqId}, sending text`);
+            ws.send(JSON.stringify({ type: 'text', text }));
+            ws.send(JSON.stringify({ type: 'end_of_stream' }));
+          } else if (msg.type === 'audio' && msg.audio) {
+            audioChunks.push(msg.audio);
+          } else if (msg.type === 'end_of_stream') {
+            const combined = combineBase64Chunks(audioChunks);
+            const audioSize = Math.ceil((combined.length * 3) / 4);
+            console.log(`[BELLA:TTS-STREAM] Synthesis complete — reqId=${reqId} chunks=${audioChunks.length} audioSize=${audioSize}bytes elapsed=${Date.now() - start}ms`);
+            settle();
+            resolve(combined);
+          } else if (msg.type === 'error') {
+            console.error(`[BELLA:TTS-STREAM] Server error — reqId=${reqId} message=${msg.message} code=${msg.code}`);
+            settle();
+            reject(new Error(`GradiumTTSStream: server error: ${msg.message} (code ${msg.code})`));
+          }
+        } catch (parseErr) {
+          console.error(`[BELLA:TTS-STREAM] Failed to parse message:`, parseErr);
+          logger.warn({ parseErr }, 'Failed to parse TTS stream message');
+        }
+      };
+
+      ws.onerror = (event: Event) => {
+        if (settled) return;
+        const errMsg = 'message' in event ? String((event as ErrorEvent).message) : 'WebSocket error';
+        console.error(`[BELLA:TTS-STREAM] WebSocket error during synthesis — reqId=${reqId} error=${errMsg}`);
+        logger.error({ error: errMsg, reqId }, 'TTS stream WebSocket error');
+        settle();
+        this.ws = null;
+        reject(new Error(`GradiumTTSStream: WebSocket error: ${errMsg}`));
+      };
+
+      ws.onclose = (event: CloseEvent) => {
+        if (this.ws === ws) this.ws = null;
+        console.log(`[BELLA:TTS-STREAM] WebSocket closed during synthesis — reqId=${reqId} code=${event.code} reason="${event.reason}"`);
+        if (!settled) {
+          settle();
+          if (audioChunks.length > 0) {
+            const combined = combineBase64Chunks(audioChunks);
+            console.log(`[BELLA:TTS-STREAM] Returning partial audio — reqId=${reqId} chunks=${audioChunks.length}`);
+            resolve(combined);
+          } else {
+            reject(new Error(`GradiumTTSStream: WebSocket closed unexpectedly: code=${event.code} reason=${event.reason}`));
+          }
+        }
+      };
+
+      // Send setup to start a new synthesis session on the existing connection
+      const setupMsg = {
+        type: 'setup',
+        voice_id: voice,
+        model_name: model,
+        output_format: 'ulaw_8000',
+      };
+      ws.send(JSON.stringify(setupMsg));
+    });
+  }
+
+  /**
+   * Install minimal handlers on the persistent socket while no synthesis is
+   * in flight. Detects server-initiated closes so `ensureConnected()` knows
+   * to reconnect on the next call.
+   */
+  private installIdleHandlers(ws: WebSocket): void {
+    ws.onmessage = () => {};
+    ws.onerror = () => {};
+    ws.onclose = (event: CloseEvent) => {
+      if (this.ws === ws) {
+        this.ws = null;
+        console.log(`[BELLA:TTS-STREAM] Persistent WS closed while idle — code=${event.code}`);
+      }
+    };
+  }
+
+  /** Close the persistent WebSocket and prevent future calls. */
+  close(): void {
+    this.closed = true;
+
+    if (this.synthTimeout) {
+      clearTimeout(this.synthTimeout);
+      this.synthTimeout = null;
+    }
+
+    if (this.ws) {
+      console.log(`[BELLA:TTS-STREAM] Closed`);
+      this.ws.close();
+      this.ws = null;
+    }
+  }
+
+  /** Whether the persistent WebSocket is currently open. */
+  get isConnected(): boolean {
+    return this.isWsOpen();
+  }
+}
+
+/**
+ * Create a new TTS stream using the global Gradium config.
+ *
+ * Caller should `await stream.connect()` to open the persistent WebSocket,
+ * then call `stream.synthesize(text)` for each turn. Call `stream.close()`
+ * when the session ends.
+ */
+export function createTTSStream(): GradiumTTSStream {
+  const apiKey = process.env.GRADIUM_API_KEY;
+  if (!apiKey) throw new Error('GRADIUM_API_KEY is required');
+  return new GradiumTTSStream({
+    apiKey,
+    baseUrl: process.env.GRADIUM_BASE_URL || 'https://api.gradium.ai',
+  });
+}
+
 let client: GradiumClient | null = null;
 
 /**

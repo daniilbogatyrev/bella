@@ -534,6 +534,12 @@ export class SessionManager {
       session.sttStream = undefined;
     }
 
+    // Close TTS stream (aborts any in-flight synthesis)
+    if (session.ttsStream) {
+      session.ttsStream.close();
+      session.ttsStream = undefined;
+    }
+
     session.audioQueue.length = 0;
     this.llmClients.get(callSid)?.endChat();
     this.llmClients.delete(callSid);
@@ -626,10 +632,21 @@ export class SessionManager {
       session.conversationHistory.push({ role: 'model', content: text });
       await this.saveTranscript(session, 'agent', text);
 
-      const { getGradiumClient } = await import('./gradium');
-      const gradium = getGradiumClient();
-      console.log(`[BELLA:SESSION] Converting greeting to audio via TTS`);
-      const audioBase64 = await gradium.textToSpeech(text);
+      const ttsProvider = process.env.TTS_PROVIDER || 'gradium';
+      let ttsStream: import('./types').TTSStream;
+      if (ttsProvider === 'elevenlabs') {
+        const { createElevenLabsTTSStream } = await import('./elevenlabs-tts');
+        ttsStream = createElevenLabsTTSStream();
+      } else {
+        const { createTTSStream } = await import('./gradium');
+        ttsStream = createTTSStream();
+      }
+      await ttsStream.connect();
+      session.ttsStream = ttsStream;
+      console.log(`[BELLA:SESSION] TTS stream connected (persistent, provider=${ttsProvider}) — callSid=${session.callSid}`);
+
+      console.log(`[BELLA:SESSION] Converting greeting to audio via TTS stream`);
+      const audioBase64 = await ttsStream.synthesize(text);
       console.log(`[BELLA:SESSION] TTS complete — audioSize=${Math.ceil((audioBase64.length * 3) / 4)}bytes`);
       this.sendAudioToTwilio(session, audioBase64, text);
 
@@ -776,6 +793,14 @@ export class SessionManager {
           session.claimId = claimResult.claimId;
         }
       }
+
+      if (tc.name === 'change_language') {
+        const langResult = tc.result as { language?: string };
+        if (langResult.language) {
+          session.language = langResult.language;
+          console.log(`[BELLA:SESSION] Language changed to "${session.language}" — callSid=${session.callSid}`);
+        }
+      }
     }
 
     const agentText = response.text || '';
@@ -784,11 +809,15 @@ export class SessionManager {
       session.conversationHistory.push({ role: 'model', content: agentText });
       await this.saveTranscript(session, 'agent', agentText);
 
-      const { getGradiumClient } = await import('./gradium');
-      const gradium = getGradiumClient();
       const ttsStart = Date.now();
-      const ttsAudio = await gradium.textToSpeech(agentText);
-      console.log(`[BELLA:TTS] TTS complete — ttsTime=${Date.now() - ttsStart}ms audioSize=${Math.ceil((ttsAudio.length * 3) / 4)}bytes`);
+      let ttsAudio: string;
+      if (session.ttsStream) {
+        ttsAudio = await session.ttsStream.synthesize(agentText);
+      } else {
+        const { getGradiumClient } = await import('./gradium');
+        ttsAudio = await getGradiumClient().textToSpeech(agentText);
+      }
+      console.log(`[BELLA:TTS] TTS complete — ttsTime=${Date.now() - ttsStart}ms audioSize=${Math.ceil((ttsAudio.length * 3) / 4)}bytes persistent=${!!session.ttsStream}`);
       this.sendAudioToTwilio(session, ttsAudio, agentText);
     }
 

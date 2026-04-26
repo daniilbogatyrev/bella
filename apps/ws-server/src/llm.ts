@@ -24,7 +24,8 @@ export const SYSTEM_PROMPT = `You are Bella, a friendly and empathetic AI insura
 - Log facts and observations about incidents
 - Request evidence (photos, documents) via SMS
 - Explain coverage and suggest relevant products
-- Transfer to a human agent when needed
+- Request a callback from a human agent when needed
+- Switch language mid-call if the caller prefers a different language (multilingual support)
 
 ## Your Workflow
 1. **Greet** the caller warmly and introduce yourself
@@ -42,7 +43,8 @@ export const SYSTEM_PROMPT = `You are Bella, a friendly and empathetic AI insura
 - Ask about: what happened, when, where, who was involved, any injuries, police report
 - Request photos/evidence proactively — "Would you be able to send us some photos?"
 - If the customer seems like a good fit, naturally mention relevant products (upsell_product)
-- Transfer to human if: customer is angry/escalating, legal questions, complex disputes
+- Request a callback (request_callback) if: customer is angry/escalating, legal questions, complex disputes
+- If the caller speaks a different language or asks to switch, use change_language and continue in that language
 - Keep responses SHORT — 1-3 sentences max per turn on a phone call
 - Never make up policy details — use get_policies if you need to refresh policy data
 
@@ -127,14 +129,24 @@ function buildToolSet(ctx: ToolContext): ToolSet {
       execute: async (input) => executeTool('upsell_product', input, ctx),
     }),
 
-    transfer_to_human: tool({
+    request_callback: tool({
       description:
-        'Transfer the call to a human agent. Use when the situation requires human judgment, the customer is upset, or the issue is beyond your capabilities.',
+        'Log a callback request so a human agent will call the customer back. Use when the situation requires human judgment, the customer is upset, or the issue is beyond your capabilities. The call does NOT transfer — instead, the customer is informed someone will call them back.',
       inputSchema: z.object({
-        reason: z.string().describe('Reason for the transfer (shown to the human agent)'),
+        reason: z.string().describe('Reason for the callback request (shown to the human agent)'),
         department: z.string().optional().describe('Target department: "claims", "billing", "general", "supervisor"'),
+        preferredTime: z.string().optional().describe('When the customer prefers to be called back (e.g., "morning", "after 3pm", "tomorrow")'),
       }),
-      execute: async (input) => executeTool('transfer_to_human', input, ctx),
+      execute: async (input) => executeTool('request_callback', input, ctx),
+    }),
+
+    change_language: tool({
+      description:
+        'Switch the conversation language. Use when the caller requests to speak in a different language or you detect they are more comfortable in another language. After calling this, respond in the new language going forward.',
+      inputSchema: z.object({
+        language: z.string().describe('The language to switch to (e.g., "German", "Spanish", "French", "Hindi", "Portuguese", "English")'),
+      }),
+      execute: async (input) => executeTool('change_language', input, ctx),
     }),
   };
 }
@@ -153,7 +165,7 @@ export class LLMClient {
   startChat(customerContext?: string): void {
     this.messages = [];
     this.customerContext = customerContext || '';
-    const toolCount = 6;
+    const toolCount = 7;
     console.log(`[BELLA:LLM] Chat session started — provider=${LLM_PROVIDER} tools=${toolCount} hasCustomerContext=${!!customerContext}`);
     logger.info({ provider: LLM_PROVIDER, hasCustomerContext: !!customerContext }, 'Chat session started');
   }

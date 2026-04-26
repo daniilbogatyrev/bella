@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
-import { GradiumClient, getGradiumClient, resetGradiumClient } from '../gradium';
+import { GradiumClient, GradiumTTSStream, getGradiumClient, resetGradiumClient, createTTSStream } from '../gradium';
 
 describe('GradiumClient', () => {
   describe('class', () => {
@@ -76,6 +76,80 @@ describe('GradiumClient', () => {
       resetGradiumClient();
       const client2 = getGradiumClient();
       expect(client1).not.toBe(client2);
+    });
+  });
+});
+
+describe('GradiumTTSStream', () => {
+  it('can be instantiated with config', () => {
+    const stream = new GradiumTTSStream({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.gradium.ai',
+    });
+    expect(stream).toBeInstanceOf(GradiumTTSStream);
+    expect(stream.isConnected).toBe(false);
+  });
+
+  it('has synthesize, connect, and close methods', () => {
+    const stream = new GradiumTTSStream({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.gradium.ai',
+    });
+    expect(typeof stream.connect).toBe('function');
+    expect(typeof stream.synthesize).toBe('function');
+    expect(typeof stream.close).toBe('function');
+  });
+
+  it('connect() rejects without apiKey', async () => {
+    const stream = new GradiumTTSStream({
+      apiKey: '',
+      baseUrl: 'https://api.gradium.ai',
+    });
+    expect(stream.connect()).rejects.toThrow('apiKey is required');
+  });
+
+  it('isConnected is false before connect()', () => {
+    const stream = new GradiumTTSStream({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.gradium.ai',
+    });
+    expect(stream.isConnected).toBe(false);
+  });
+
+  it('rejects synthesize when closed', async () => {
+    const stream = new GradiumTTSStream({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.gradium.ai',
+    });
+    stream.close();
+    expect(stream.synthesize('hello')).rejects.toThrow('stream is closed');
+  });
+
+  it('close() is safe to call multiple times', () => {
+    const stream = new GradiumTTSStream({
+      apiKey: 'test-key',
+      baseUrl: 'https://api.gradium.ai',
+    });
+    stream.close();
+    stream.close();
+    expect(stream.isConnected).toBe(false);
+  });
+
+  describe('createTTSStream factory', () => {
+    beforeEach(() => {
+      delete process.env.GRADIUM_API_KEY;
+      delete process.env.GRADIUM_BASE_URL;
+    });
+
+    it('throws when GRADIUM_API_KEY is not set', () => {
+      expect(() => createTTSStream()).toThrow('GRADIUM_API_KEY is required');
+    });
+
+    it('returns a GradiumTTSStream when API key is set', () => {
+      process.env.GRADIUM_API_KEY = 'test-key';
+      const stream = createTTSStream();
+      expect(stream).toBeInstanceOf(GradiumTTSStream);
+      stream.close();
     });
   });
 });

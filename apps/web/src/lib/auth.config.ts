@@ -23,8 +23,8 @@ export const authConfig = {
   callbacks: {
     authorized({ auth: session, request }) {
       const isLoggedIn = !!session?.user;
-      const isOnLogin = request.nextUrl.pathname === '/login';
-      if (isOnLogin) return true;
+      const pathname = request.nextUrl.pathname;
+      if (pathname === '/login' || pathname === '/') return true;
       return isLoggedIn;
     },
   },

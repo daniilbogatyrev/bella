@@ -178,10 +178,11 @@ const toolHandlers: Record<string, ToolHandler> = {
     };
   },
 
-  transfer_to_human: async (args, ctx) => {
+  request_callback: async (args, ctx) => {
     const reason = args.reason as string;
     const department = (args.department as string) || 'general';
-    console.log(`[BELLA:TOOL] transfer_to_human — reason="${reason}" department=${department}`);
+    const preferredTime = (args.preferredTime as string) || 'as soon as possible';
+    console.log(`[BELLA:TOOL] request_callback — reason="${reason}" department=${department} preferredTime="${preferredTime}"`);
 
     if (ctx.claimId) {
       const db = getDb();
@@ -189,16 +190,28 @@ const toolHandlers: Record<string, ToolHandler> = {
         claimId: ctx.claimId,
         sessionId: ctx.sessionId,
         type: 'action',
-        content: `Transfer to human requested: ${reason} (department: ${department})`,
+        content: `Callback requested: ${reason} (department: ${department}, preferred time: ${preferredTime})`,
       });
     }
 
-    logger.info({ reason, department }, 'Transfer to human requested');
+    logger.info({ reason, department, preferredTime, callerPhone: ctx.callerPhone }, 'Callback request logged');
     return {
       success: true,
-      transferred: true,
+      callbackRequested: true,
       department,
-      message: `Transferring to ${department} department. Reason: ${reason}`,
+      preferredTime,
+      message: `Callback request logged for ${department} department. A human agent will call the customer back ${preferredTime}. Reason: ${reason}`,
+    };
+  },
+
+  change_language: async (args, _ctx) => {
+    const language = args.language as string;
+    console.log(`[BELLA:TOOL] change_language — language="${language}"`);
+    logger.info({ language }, 'Language change requested');
+    return {
+      success: true,
+      language,
+      message: `Language changed to ${language}. Please continue the conversation in ${language}.`,
     };
   },
 };

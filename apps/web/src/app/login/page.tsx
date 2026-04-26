@@ -2,8 +2,10 @@
 
 import { signIn } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
-import { Suspense } from 'react';
+import { Suspense, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Card,
   CardContent,
@@ -11,10 +13,46 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { Loader2 } from 'lucide-react';
 
 function LoginContent() {
   const searchParams = useSearchParams();
   const error = searchParams.get('error');
+
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [credError, setCredError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  async function handleCredentialsLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setCredError(null);
+    setIsLoading(true);
+
+    try {
+      const result = await signIn('credentials', {
+        email: email.trim().toLowerCase(),
+        password,
+        redirect: false,
+      });
+
+      if (result?.error) {
+        if (result.error.includes('NoPassword')) {
+          setCredError(
+            'No password set. Please sign in with Google first, then set a password in Settings.',
+          );
+        } else {
+          setCredError('Invalid email or password.');
+        }
+      } else if (result?.ok) {
+        window.location.href = '/dashboard';
+      }
+    } catch {
+      setCredError('Something went wrong. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -41,6 +79,7 @@ function LoginContent() {
               Something went wrong. Please try again.
             </div>
           )}
+
           <Button
             className="w-full"
             variant="outline"
@@ -70,6 +109,53 @@ function LoginContent() {
             </svg>
             Sign in with Google
           </Button>
+
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t" />
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-card px-2 text-muted-foreground">or</span>
+            </div>
+          </div>
+
+          <form onSubmit={handleCredentialsLogin} className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                autoComplete="email"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+              />
+            </div>
+
+            {credError && (
+              <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-center text-sm text-destructive">
+                {credError}
+              </div>
+            )}
+
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading && <Loader2 className="mr-2 size-4 animate-spin" />}
+              Sign in with Email
+            </Button>
+          </form>
         </CardContent>
       </Card>
     </div>

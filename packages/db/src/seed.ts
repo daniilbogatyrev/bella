@@ -7,12 +7,21 @@ async function seed() {
 
   console.log('Seeding database...');
 
-  // Seed default admin user
+  // Seed default admin user with a password so they can log in immediately
+  const defaultPasswordHash = await Bun.password.hash('123456789');
   await db.insert(adminUsers).values({
     email: 'idevsubham@gmail.com',
     name: 'Subham',
     role: 'admin',
-  }).onConflictDoNothing();
+    passwordHash: defaultPasswordHash,
+  }).onConflictDoUpdate({
+    target: adminUsers.email,
+    set: {
+      name: 'Subham',
+      role: 'admin',
+      passwordHash: defaultPasswordHash,
+    },
+  });
   console.log('✅ Default admin seeded');
 
   const existing = await db.query.customers.findFirst({

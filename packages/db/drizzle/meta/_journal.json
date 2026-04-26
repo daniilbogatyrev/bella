@@ -15,6 +15,13 @@
       "when": 1777134104025,
       "tag": "0001_lively_red_wolf",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777179203642,
+      "tag": "0002_add_password_hash",
+      "breakpoints": true
     }
   ]
 }

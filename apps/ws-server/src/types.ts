@@ -118,6 +118,23 @@ export interface ElevenLabsSTTStream {
   close(): void;
 }
 
+/**
+ * Handle for a per-session Gradium TTS stream with a persistent WebSocket.
+ *
+ * Call `connect()` once to open the WebSocket, then `synthesize()` for each
+ * turn (reuses the same connection). Call `close()` when the session ends.
+ */
+export interface TTSStream {
+  /** Open the persistent WebSocket connection. */
+  connect(): Promise<void>;
+  /** Synthesize text to base64-encoded mulaw 8 kHz audio. */
+  synthesize(text: string): Promise<string>;
+  /** Tear down the persistent WebSocket connection. */
+  close(): void;
+  /** Whether the underlying WebSocket is open and ready. */
+  readonly isConnected: boolean;
+}
+
 export interface Session {
   id: string;
   callSid: string;
@@ -143,4 +160,8 @@ export interface Session {
   bgSeekPosition: number;
   /** Per-session ElevenLabs WebSocket STT stream (only when STT_PROVIDER=elevenlabs). */
   sttStream?: ElevenLabsSTTStream;
+  /** Per-session TTS stream — Gradium or ElevenLabs depending on TTS_PROVIDER. */
+  ttsStream?: TTSStream;
+  /** Conversation language preference (set via change_language tool). */
+  language?: string;
 }
