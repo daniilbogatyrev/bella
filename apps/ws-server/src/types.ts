@@ -1,167 +1,175 @@
-/** Twilio Media Stream connected event — sent when connection is established. */
-export interface TwilioConnectedEvent {
-  event: 'connected';
-  protocol: string;
-  version: string;
-}
+import type { ServerWebSocket } from "bun";
+import type { Logger } from "pino";
 
-/** Twilio Media Stream start event — contains stream metadata and caller info. */
-export interface TwilioStartEvent {
-  event: 'start';
-  sequenceNumber: string;
-  start: {
-    streamSid: string;
-    accountSid: string;
-    callSid: string;
-    tracks: string[];
-    customParameters: Record<string, string>;
-    mediaFormat: {
-      encoding: string;
-      sampleRate: number;
-      channels: number;
-    };
-  };
-  streamSid: string;
-}
+/** Insurance product types supported by SafeGuard */
+export type InsuranceType =
+  | "auto"
+  | "health"
+  | "liability"
+  | "home"
+  | "life"
+  | "travel";
 
-/** Twilio Media Stream media event — contains base64-encoded audio chunk. */
-export interface TwilioMediaEvent {
-  event: 'media';
-  sequenceNumber: string;
-  media: {
-    track: string;
-    chunk: string;
-    timestamp: string;
-    payload: string;
-  };
-  streamSid: string;
-}
+/** Claim lifecycle status */
+export type ClaimStatus =
+  | "draft"
+  | "gathering_info"
+  | "ready_for_review"
+  | "submitted"
+  | "under_review"
+  | "approved"
+  | "denied"
+  | "closed";
 
-/** Twilio Media Stream mark event — confirms playback reached a mark point. */
-export interface TwilioMarkEvent {
-  event: 'mark';
-  sequenceNumber: string;
-  mark: { name: string };
-  streamSid: string;
-}
+/** Voice agent processing state */
+export type AssistantState =
+  | "idle"
+  | "idle_listening"
+  | "active_listening"
+  | "processing"
+  | "responding";
 
-/** Twilio Media Stream stop event — stream is ending. */
-export interface TwilioStopEvent {
-  event: 'stop';
-  sequenceNumber: string;
-  stop: { accountSid: string; callSid: string };
-  streamSid: string;
-}
-
-export type TwilioMessage =
-  | TwilioConnectedEvent
-  | TwilioStartEvent
-  | TwilioMediaEvent
-  | TwilioMarkEvent
-  | TwilioStopEvent;
-
-export interface TwilioOutgoingMedia {
-  event: 'media';
-  streamSid: string;
-  media: { payload: string };
-}
-
-export interface TwilioOutgoingMark {
-  event: 'mark';
-  streamSid: string;
-  mark: { name: string };
-}
-
-export interface TwilioClearMessage {
-  event: 'clear';
-  streamSid: string;
-}
-
-export interface ConversationMessage {
-  role: 'user' | 'model' | 'function';
-  content: string;
-  toolName?: string;
-  toolInput?: Record<string, unknown>;
-  toolResult?: unknown;
-}
-
-export interface AudioQueueItem {
-  payload: string;
-  markName?: string;
-}
-
-/**
- * Tracks TTS audio playback progress so barge-in can determine
- * what portion of the response the caller actually heard.
- */
-export interface PlaybackState {
-  /** The complete LLM response text being played. */
-  fullText: string;
-  /** Total audio chunks queued for this response. */
-  totalChunks: number;
-  /** Chunks actually sent to Twilio so far. */
-  sentChunks: number;
-  /** Whether TTS audio is currently being played to the caller. */
-  isPlaying: boolean;
-  /** The mark name for the current playback (set when queue empties). */
-  currentMark?: string;
-}
-
-/**
- * Handle for a per-session ElevenLabs WebSocket STT stream.
- * Created on session start, closed on session end.
- */
-export interface ElevenLabsSTTStream {
-  /** Forward a base64-encoded mulaw audio chunk to the ElevenLabs WS. */
-  sendAudio(mulawBase64: string): void;
-  /** Gracefully close the WebSocket connection. */
-  close(): void;
-}
-
-/**
- * Handle for a per-session Gradium TTS stream with a persistent WebSocket.
- *
- * Call `connect()` once to open the WebSocket, then `synthesize()` for each
- * turn (reuses the same connection). Call `close()` when the session ends.
- */
-export interface TTSStream {
-  /** Open the persistent WebSocket connection. */
-  connect(): Promise<void>;
-  /** Synthesize text to base64-encoded mulaw 8 kHz audio. */
-  synthesize(text: string): Promise<string>;
-  /** Tear down the persistent WebSocket connection. */
-  close(): void;
-  /** Whether the underlying WebSocket is open and ready. */
-  readonly isConnected: boolean;
-}
-
-export interface Session {
+/** Customer record from DB lookup */
+export interface Customer {
   id: string;
-  callSid: string;
-  streamSid: string;
-  callerPhone: string;
-  customerId?: string;
-  claimId?: string;
-  ws: { send: (data: string) => void };
-  conversationHistory: ConversationMessage[];
-  audioQueue: AudioQueueItem[];
-  audioBuffer: string[];
-  audioBufferBytes: number;
-  /** Continuous background audio loop interval — sends bg noise even between TTS turns. */
-  bgInterval?: ReturnType<typeof setInterval>;
-  lastMarkName?: string;
-  markSequence: number;
-  status: 'initializing' | 'active' | 'closing' | 'closed';
-  processing: boolean;
-  startedAt: Date;
-  dbSessionId?: string;
-  playback: PlaybackState;
-  /** Current position in the background noise audio loop (per session). */
-  bgSeekPosition: number;
-  /** Per-session ElevenLabs WebSocket STT stream (only when STT_PROVIDER=elevenlabs). */
-  sttStream?: ElevenLabsSTTStream;
-  /** Per-session TTS stream — Gradium or ElevenLabs depending on TTS_PROVIDER. */
-  ttsStream?: TTSStream;
-  /** Conversation language preference (set via change_language tool). */
-  language?: string;
+  phone: string;
+  firstName: string;
+  lastName: string;
+  dob: string;
+  email: string;
+  address: string;
+}
+
+/** Policy record from DB lookup */
+export interface Policy {
+  id: string;
+  customerId: string;
+  type: InsuranceType;
+  planName: string;
+  status: string;
+  startDate: string;
+  endDate: string;
+  details: Record<string, unknown>;
+}
+
+/** Open claim record */
+export interface Claim {
+  id: string;
+  customerId: string;
+  policyId: string | null;
+  type: InsuranceType;
+  status: ClaimStatus;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Common interface for all TTS stream implementations */
+export interface TTSStream {
+  /** Open the connection to the TTS service */
+  connect(): Promise<void>;
+
+  /** Send text to be synthesized; audio arrives via the onAudio callback */
+  synthesize(text: string): void;
+
+  /** Gracefully close the TTS connection */
+  close(): void;
+
+  /** Whether the underlying connection is open and ready */
+  readonly isConnected: boolean;
+
+  /** Called for each audio chunk produced by the TTS engine (base64 mulaw) */
+  onAudio?: (audioBase64: string) => void;
+}
+
+/** Audio chunk queued for Twilio playback */
+export type AudioQueueItem =
+  | { audioInBase64: string }
+  | { clearQueueInTwilio: true };
+
+/**
+ * Represents a single active phone call session.
+ *
+ * Tracks the WebSocket connection to Twilio, audio queue state,
+ * customer context, and all lifecycle flags needed to manage
+ * the call from start to graceful teardown.
+ */
+export interface Session {
+  /** Unique call identifier (Twilio CallSid) */
+  callId: string;
+
+  /** Twilio media stream identifier, set on "start" event */
+  streamSid: string | undefined;
+
+  /** WebSocket connection back to Twilio */
+  twilioWs: ServerWebSocket<unknown>;
+
+  /** Queued audio chunks waiting to be sent to Twilio */
+  sendQueue: AudioQueueItem[];
+
+  /** Interval handle for the audio queue processor */
+  sendQueueInterval: ReturnType<typeof setInterval> | undefined;
+
+  /** Current voice agent state */
+  assistantState: AssistantState;
+
+  /** Monotonically increasing sequence number for Twilio mark events */
+  sequenceNumber: number;
+
+  /** The last sequence number that was sent before an end-call request */
+  lastSeqNumber: number;
+
+  /**
+   * When true, the session will close all connections after the
+   * final audio chunk (identified by mark event) finishes playing.
+   */
+  shouldCloseAfterMark: boolean;
+
+  /**
+   * Set to true when the LLM calls the end_call tool.
+   * The session will play the final goodbye TTS, then gracefully disconnect.
+   */
+  endCallRequested: boolean;
+
+  /** Prevents duplicate cleanup on concurrent close paths */
+  alreadyClosing: boolean;
+
+  /** Session-scoped logger */
+  logger: Logger;
+
+  /** Resolved customer record (null until lookup completes) */
+  customer: Customer | null;
+
+  /** Customer's active policies */
+  policies: Policy[];
+
+  /** Currently active claim for this call session */
+  activeClaim: Claim | null;
+
+  /** Gemini conversation history for multi-turn context */
+  conversationHistory: Array<{
+    role: "user" | "model";
+    parts: Array<{ text: string }>;
+  }>;
+
+  /** ISO timestamp of when the session started */
+  startedAt: string;
+
+  /** Timer handle for the 9-minute max call duration auto-complete */
+  maxDurationTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Caller phone number from Twilio (E.164 format) */
+  callerPhone: string | null;
+
+  /** Active TTS stream for this session (needed for voice switching) */
+  ttsStream: TTSStream | null;
+
+  /** Current conversation language (ISO 639-1 code) */
+  language: string;
+
+  /** Facts logged before a claim is opened — flushed when open_claim is called */
+  pendingFacts: Array<{ content: string; category?: string }>;
+
+  /** Summary of the call conversation, generated when the call ends */
+  callSummary: string | null;
 }

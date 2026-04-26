@@ -1,277 +1,314 @@
-import { generateText, stepCountIs, type ModelMessage, type ToolSet } from 'ai';
-import { tool } from 'ai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createGroq } from '@ai-sdk/groq';
-import { z } from 'zod';
-import pino from 'pino';
-import { executeTool, type ToolContext } from './tools';
+import type { Session } from "./types.ts";
+import { buildSystemPrompt } from "./prompt.ts";
+import { handleToolCall } from "./tools.ts";
+import { createGroq } from "@ai-sdk/groq";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { type LanguageModel } from "ai";
+import pino from "pino";
 
-const logger = pino({ name: 'bella-llm' });
+const logger = pino({ name: "bella-llm" });
 
-const LLM_PROVIDER = process.env.LLM_PROVIDER || 'gemini';
+/** Supported LLM providers */
+export type LLMProvider = "gemini" | "groq";
 
-export const SYSTEM_PROMPT = `You are Bella, a friendly and empathetic AI insurance agent for SafeGuard Insurance.
-
-## Your Personality
-- Warm, professional, and patient — like a helpful neighbor who happens to know insurance inside and out
-- You speak in brief, natural sentences (this is a phone call, not an essay)
-- You say "um" or "let me check on that" occasionally to feel human
-- You're empathetic about claims — people calling have often had a bad day
-
-## Your Capabilities
-- Retrieve policy details
-- Open and manage insurance claims
-- Log facts and observations about incidents
-- Request evidence (photos, documents) via SMS
-- Explain coverage and suggest relevant products
-- Request a callback from a human agent when needed
-- Switch language mid-call if the caller prefers a different language (multilingual support)
-
-## Your Workflow
-1. **Greet** the caller warmly and introduce yourself
-2. **Identify** the customer — their info is provided below if found by phone, otherwise ask for details
-3. **Understand** why they're calling — listen carefully before jumping to action
-4. **Gather information** step by step — don't overwhelm with questions
-5. **Take action** — open claims, log facts, request evidence as needed
-6. **Summarize** what you've done and what happens next
-7. **Close** warmly — ask if there's anything else
-
-## Important Rules
-- The caller's information and policies are pre-loaded below — do NOT call lookup_customer
-- Log EVERY important fact the customer mentions using log_fact
-- When a customer describes an incident, open a claim and gather details methodically
-- Ask about: what happened, when, where, who was involved, any injuries, police report
-- Request photos/evidence proactively — "Would you be able to send us some photos?"
-- If the customer seems like a good fit, naturally mention relevant products (upsell_product)
-- Request a callback (request_callback) if: customer is angry/escalating, legal questions, complex disputes
-- If the caller speaks a different language or asks to switch, use change_language and continue in that language
-- Keep responses SHORT — 1-3 sentences max per turn on a phone call
-- Never make up policy details — use get_policies if you need to refresh policy data
-
-{CUSTOMER_CONTEXT}`;
-
-function getModel() {
-  switch (LLM_PROVIDER) {
-    case 'groq': {
-      const apiKey = process.env.GROQ_API_KEY;
-      if (!apiKey) throw new Error('GROQ_API_KEY is required');
-      const groq = createGroq({ apiKey });
-      return groq(process.env.GROQ_MODEL || 'openai/gpt-oss-20b');
-    }
-    case 'gemini':
-    default: {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) throw new Error('GEMINI_API_KEY is required');
-      const google = createGoogleGenerativeAI({ apiKey });
-      return google(process.env.GEMINI_MODEL || 'gemini-flash-latest');
-    }
-  }
+/** Resolve the active LLM provider from env */
+export function getLLMProvider(): LLMProvider {
+  const raw = process.env.LLM_PROVIDER?.toLowerCase();
+  if (raw === "groq") return "groq";
+  return "gemini";
 }
 
+/** Model IDs per provider */
+const MODEL_IDS: Record<LLMProvider, string> = {
+  groq: "openai/gpt-oss-20b",
+  gemini: "gemini-2.0-flash",
+};
+
 /**
- * Build the Vercel AI SDK tool set from our tool context.
- * Each tool delegates to the real `executeTool` handler in tools.ts.
+ * Create a Vercel AI SDK `LanguageModel` for the configured provider.
+ *
+ * Reads `LLM_PROVIDER` (gemini | groq) and the matching API key from env.
+ * Logs the resolved configuration at startup level.
  */
-function buildToolSet(ctx: ToolContext): ToolSet {
-  return {
-    get_policies: tool({
-      description: 'Retrieve all insurance policies for a given customer.',
-      inputSchema: z.object({
-        customerId: z.string().describe('The UUID of the customer'),
-      }),
-      execute: async (input) => executeTool('get_policies', input, ctx),
-    }),
+export function createModel(): LanguageModel {
+  const provider = getLLMProvider();
+  const modelId = MODEL_IDS[provider];
 
-    open_claim: tool({
-      description:
-        'Open a new insurance claim in draft status. Use after confirming the customer wants to file a claim.',
-      inputSchema: z.object({
-        customerId: z.string().describe('The UUID of the customer filing the claim'),
-        policyId: z.string().optional().describe('The UUID of the policy this claim is against'),
-        type: z.string().describe('Type of claim (e.g., "auto_collision", "water_damage", "theft", "medical")'),
-        description: z.string().describe('Brief description of the incident'),
-        incidentDate: z.string().optional().describe('Date of the incident in YYYY-MM-DD format'),
-        incidentLocation: z.string().optional().describe('Location where the incident occurred'),
-      }),
-      execute: async (input) => executeTool('open_claim', input, ctx),
-    }),
+  if (provider === "groq") {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) throw new Error("GROQ_API_KEY is required when LLM_PROVIDER=groq");
+    const groq = createGroq({ apiKey });
+    logger.info(`[BELLA:CONFIG] LLM provider: groq (${modelId})`);
+    return groq(modelId);
+  }
 
-    log_fact: tool({
-      description:
-        'Record an important fact or detail about a claim that the customer mentioned. Call this for every significant piece of information.',
-      inputSchema: z.object({
-        claimId: z.string().describe('The UUID of the claim this fact belongs to'),
-        content: z.string().describe('The fact to record (e.g., "Customer states the other driver ran a red light")'),
-        type: z.string().optional().describe('Type of event: "fact", "observation", or "action"'),
-      }),
-      execute: async (input) => executeTool('log_fact', input, ctx),
-    }),
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY is required when LLM_PROVIDER=gemini");
+  const google = createGoogleGenerativeAI({ apiKey });
+  logger.info(`[BELLA:CONFIG] LLM provider: gemini (${modelId})`);
+  return google(modelId);
+}
 
-    request_evidence: tool({
-      description:
-        'Request the customer to upload evidence (photos, documents, video) via SMS. Sends an upload link to their phone.',
-      inputSchema: z.object({
-        claimId: z.string().describe('The UUID of the claim this evidence is for'),
-        fileType: z.string().describe('Type of file expected: "photo", "document", or "video"'),
-        description: z.string().describe('Description of what evidence is needed (e.g., "Photo of vehicle damage")'),
-      }),
-      execute: async (input) => executeTool('request_evidence', input, ctx),
-    }),
-
-    upsell_product: tool({
-      description:
-        'Log a natural product suggestion to the customer. Use when the conversation naturally leads to a coverage gap.',
-      inputSchema: z.object({
-        customerId: z.string().describe('The UUID of the customer'),
-        product: z.string().describe('Product name being suggested (e.g., "Roadside Assistance Plus")'),
-        reason: z.string().describe('Why this product is relevant to the customer right now'),
-      }),
-      execute: async (input) => executeTool('upsell_product', input, ctx),
-    }),
-
-    request_callback: tool({
-      description:
-        'Log a callback request so a human agent will call the customer back. Use when the situation requires human judgment, the customer is upset, or the issue is beyond your capabilities. The call does NOT transfer — instead, the customer is informed someone will call them back.',
-      inputSchema: z.object({
-        reason: z.string().describe('Reason for the callback request (shown to the human agent)'),
-        department: z.string().optional().describe('Target department: "claims", "billing", "general", "supervisor"'),
-        preferredTime: z.string().optional().describe('When the customer prefers to be called back (e.g., "morning", "after 3pm", "tomorrow")'),
-      }),
-      execute: async (input) => executeTool('request_callback', input, ctx),
-    }),
-
-    change_language: tool({
-      description:
-        'Switch the conversation language. Use when the caller requests to speak in a different language or you detect they are more comfortable in another language. After calling this, respond in the new language going forward.',
-      inputSchema: z.object({
-        language: z.string().describe('The language to switch to (e.g., "German", "Spanish", "French", "Hindi", "Portuguese", "English")'),
-      }),
-      execute: async (input) => executeTool('change_language', input, ctx),
-    }),
+/** Tool definition shape for LLM function-calling */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: {
+    type: "object";
+    properties: Record<
+      string,
+      { type: string; description: string; enum?: string[] }
+    >;
+    required: string[];
   };
 }
 
-/**
- * Manages a multi-turn conversation using Vercel AI SDK's `generateText`.
- * Works identically with both Gemini and Groq (or any other AI SDK provider).
- *
- * Maintains conversation history as `ModelMessage[]` and handles tool calls
- * automatically via `stopWhen: stepCountIs()`.
- */
-export class LLMClient {
-  private messages: ModelMessage[] = [];
-  private customerContext = '';
-
-  startChat(customerContext?: string): void {
-    this.messages = [];
-    this.customerContext = customerContext || '';
-    const toolCount = 7;
-    console.log(`[BELLA:LLM] Chat session started — provider=${LLM_PROVIDER} tools=${toolCount} hasCustomerContext=${!!customerContext}`);
-    logger.info({ provider: LLM_PROVIDER, hasCustomerContext: !!customerContext }, 'Chat session started');
-  }
-
-  /**
-   * Send a user message and get the model's response, executing any tool calls automatically.
-   *
-   * @param message - User's text input (from STT)
-   * @param toolContext - Session context passed to tool handlers
-   * @returns Object with `text` (response string) and `toolCalls` executed
-   */
-  async chat(
-    message: string,
-    toolContext: ToolContext,
-  ): Promise<{ text: string; toolCalls: Array<{ name: string; args: Record<string, unknown>; result: object }> }> {
-    this.messages.push({ role: 'user', content: message });
-
-    const truncated = message.length > 120 ? message.substring(0, 120) + '...' : message;
-    console.log(`[BELLA:LLM] Sending message to ${LLM_PROVIDER}: "${truncated}"`);
-    const start = Date.now();
-
-    const tools = buildToolSet(toolContext);
-    const model = getModel();
-
-    const result = await generateText({
-      model,
-      system: SYSTEM_PROMPT.replace('{CUSTOMER_CONTEXT}', this.customerContext),
-      messages: this.messages,
-      tools,
-      stopWhen: stepCountIs(10),
-      onStepFinish: ({ toolCalls, text }) => {
-        if (toolCalls && toolCalls.length > 0) {
-          console.log(`[BELLA:LLM] Tool calls in step: ${toolCalls.map((tc: any) => tc.toolName).join(', ')}`);
-        }
-        if (text) {
-          const textTrunc = text.length > 120 ? text.substring(0, 120) + '...' : text;
-          console.log(`[BELLA:LLM] Step text: "${textTrunc}"`);
-        }
+/** All 8 tools available to the LLM */
+export const TOOL_DEFINITIONS: ToolDefinition[] = [
+  {
+    name: "lookup_customer",
+    description:
+      "Look up a customer by phone number, name, or date of birth. Use this to identify the caller.",
+    parameters: {
+      type: "object",
+      properties: {
+        phone: {
+          type: "string",
+          description: "Customer phone number with country code",
+        },
+        name: { type: "string", description: "Customer full name" },
+        dob: {
+          type: "string",
+          description: "Customer date of birth (YYYY-MM-DD)",
+        },
       },
-    });
+      required: [],
+    },
+  },
+  {
+    name: "get_policies",
+    description:
+      "Retrieve all active insurance policies for the current customer. Call this when the customer asks about their coverage or policies.",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "open_claim",
+    description:
+      "Open a new insurance claim for the customer. Use this when a customer wants to file a claim.",
+    parameters: {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          description: "Type of insurance claim",
+          enum: ["auto", "health", "liability", "home", "life", "travel"],
+        },
+        description: {
+          type: "string",
+          description: "Brief description of what happened",
+        },
+      },
+      required: ["type", "description"],
+    },
+  },
+  {
+    name: "log_fact",
+    description:
+      "Log a fact or piece of information. Can be used to record claim details or caller information like their name. When a new caller provides their name, the system automatically creates a customer profile.",
+    parameters: {
+      type: "object",
+      properties: {
+        fact: {
+          type: "string",
+          description: "The fact or observation to record",
+        },
+        category: {
+          type: "string",
+          description: "Category of the fact",
+          enum: [
+            "name",
+            "customer_name",
+            "incident_date",
+            "incident_location",
+            "description",
+            "parties_involved",
+            "police_report",
+            "injuries",
+            "damage",
+            "costs",
+            "provider",
+            "other",
+          ],
+        },
+      },
+      required: ["fact"],
+    },
+  },
+  {
+    name: "request_evidence",
+    description:
+      "Send an SMS to the customer with a link to upload photos or documents as evidence for their claim.",
+    parameters: {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          description: "Type of evidence being requested",
+          enum: ["photo", "document", "video", "receipt", "medical_record"],
+        },
+        description: {
+          type: "string",
+          description: "What the customer should upload",
+        },
+      },
+      required: ["type"],
+    },
+  },
+  {
+    name: "upsell_product",
+    description:
+      "Recommend an insurance product to the customer. Use this when the customer might benefit from additional coverage.",
+    parameters: {
+      type: "object",
+      properties: {
+        product: {
+          type: "string",
+          description: "Insurance product to recommend",
+          enum: ["auto", "health", "liability", "home", "life", "travel"],
+        },
+        reason: {
+          type: "string",
+          description:
+            "Why this product is relevant based on the conversation",
+        },
+      },
+      required: ["product", "reason"],
+    },
+  },
+  {
+    name: "request_callback",
+    description:
+      "Request a callback from a specialist for the customer. Use this when the customer needs help beyond what you can provide.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          description: "Why a callback is needed",
+        },
+        preferredTime: {
+          type: "string",
+          description:
+            "Customer's preferred callback time (e.g., 'tomorrow morning', '2pm')",
+        },
+      },
+      required: ["reason"],
+    },
+  },
+  {
+    name: "end_call",
+    description:
+      "End the current call. Call this ONLY when the customer explicitly says goodbye.",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "change_language",
+    description:
+      "Switch the conversation language and TTS voice. Use this when the customer speaks in a different language or explicitly requests a language switch. Supported: en (English), de (German), es (Spanish).",
+    parameters: {
+      type: "object",
+      properties: {
+        language: {
+          type: "string",
+          description: "ISO 639-1 language code to switch to",
+          enum: ["en", "de", "es"],
+        },
+      },
+      required: ["language"],
+    },
+  },
+];
 
-    const elapsed = Date.now() - start;
+/** Total number of tools available to the LLM */
+export const TOOL_COUNT = TOOL_DEFINITIONS.length;
 
-    // Collect all tool calls from all steps
-    const allToolCalls: Array<{ name: string; args: Record<string, unknown>; result: object }> = [];
-    for (const step of result.steps) {
-      for (let i = 0; i < step.toolCalls.length; i++) {
-        const tc = step.toolCalls[i]!;
-        const tr = step.toolResults[i];
-        allToolCalls.push({
-          name: tc.toolName,
-          args: (tc as any).input as Record<string, unknown>,
-          result: ((tr as any)?.output ?? {}) as object,
-        });
-      }
+/**
+ * Format customer context for injection into the system prompt.
+ *
+ * @returns A human-readable context block, or an empty-string note for unknown callers.
+ */
+export function formatCustomerContext(session: Session): string {
+  const { customer, policies, activeClaim } = session;
+
+  if (!customer) {
+    return "## Customer Context\nUnknown caller. No customer record found yet. Ask for their name and try to help.";
+  }
+
+  const lines: string[] = [
+    "## Customer Context",
+    `Name: ${customer.firstName} ${customer.lastName}`,
+    `Phone: ${customer.phone}`,
+    `Email: ${customer.email}`,
+    `DOB: ${customer.dob}`,
+  ];
+
+  if (policies.length > 0) {
+    lines.push("");
+    lines.push("### Active Policies");
+    for (const p of policies) {
+      lines.push(`- ${p.type.toUpperCase()}: ${p.planName} (${p.status}) — ${p.startDate} to ${p.endDate}`);
     }
-
-    // Append the full response messages to history for multi-turn continuity
-    this.messages.push({ role: 'assistant', content: result.text });
-
-    const textTrunc = result.text.length > 120 ? result.text.substring(0, 120) + '...' : result.text;
-    console.log(
-      `[BELLA:LLM] ${LLM_PROVIDER} response in ${elapsed}ms — text="${textTrunc}" toolCalls=${allToolCalls.length}`,
-    );
-    logger.debug({ text: result.text }, `${LLM_PROVIDER} response received`);
-
-    return { text: result.text, toolCalls: allToolCalls };
+  } else {
+    lines.push("\nNo active policies on file.");
   }
 
-  endChat(): void {
-    console.log(`[BELLA:LLM] Chat session ended — provider=${LLM_PROVIDER}`);
-    this.messages = [];
-    logger.info('Chat session ended');
+  if (activeClaim) {
+    lines.push("");
+    lines.push("### Open Claim");
+    lines.push(`- Claim ID: ${activeClaim.id}`);
+    lines.push(`- Type: ${activeClaim.type}`);
+    lines.push(`- Status: ${activeClaim.status}`);
+    lines.push(`- Description: ${activeClaim.description}`);
   }
 
-  /**
-   * Generate a summary of the call for session close-out.
-   *
-   * @param conversationContext - Description of what happened during the call
-   * @returns Summary text
-   */
-  async generateSummary(conversationContext: string): Promise<string> {
-    console.log(`[BELLA:LLM] Generating call summary — provider=${LLM_PROVIDER} contextLen=${conversationContext.length}`);
-    const start = Date.now();
-    const model = getModel();
-
-    const result = await generateText({
-      model,
-      prompt:
-        `Summarize this insurance call in 2-3 sentences for the agent's records. ` +
-        `Focus on: who called, what they needed, what actions were taken, and next steps.\n\n${conversationContext}`,
-    });
-
-    const summary = result.text || 'Call completed.';
-    const truncatedSummary = summary.length > 120 ? summary.substring(0, 120) + '...' : summary;
-    console.log(`[BELLA:LLM] Summary generated in ${Date.now() - start}ms: "${truncatedSummary}"`);
-    return summary;
-  }
+  return lines.join("\n");
 }
 
-/** Return the name of the currently configured LLM provider. */
-export function getLLMProviderName(): string {
-  return LLM_PROVIDER;
+/**
+ * Build the complete system instruction for the LLM session.
+ *
+ * Combines the externalized prompt template with live customer context.
+ */
+export function getSystemPrompt(session: Session): string {
+  const customerContext = formatCustomerContext(session);
+  return buildSystemPrompt(customerContext);
 }
 
-/** Create a new LLMClient instance. */
-export function createLLMClient(): LLMClient {
-  return new LLMClient();
+/**
+ * Process tool calls returned by the LLM and return results.
+ *
+ * @param toolCalls - Array of tool call objects from the LLM response
+ * @param session - The active call session
+ * @returns Array of tool results to feed back to the LLM
+ */
+export async function processToolCalls(
+  toolCalls: Array<{ name: string; args: Record<string, unknown> }>,
+  session: Session,
+): Promise<Array<{ name: string; response: Record<string, unknown> }>> {
+  const results = [];
+
+  for (const call of toolCalls) {
+    const result = await handleToolCall(call.name, call.args, session);
+    results.push(result);
+  }
+
+  return results;
 }

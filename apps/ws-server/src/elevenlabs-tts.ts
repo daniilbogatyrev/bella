@@ -1,284 +1,239 @@
-import pino from 'pino';
-import type { TTSStream } from './types';
+import pino from "pino";
+import type { TTSStream } from "./types.ts";
 
-const logger = pino({ name: 'bella-tts-11labs' });
+const logger = pino({ name: "bella-elevenlabs-tts" });
 
-const LOG_PREFIX = '[BELLA:TTS:11LABS]';
+/** Supported language codes for voice selection */
+export type SupportedLanguage = "en" | "de" | "es";
 
-const DEFAULT_VOICE_ID = '9BWtsMINqrJLrRacOk9x'; // Aria — natural, warm female voice
-const DEFAULT_MODEL_ID = 'eleven_turbo_v2_5';
-const WS_BASE_URL = 'wss://api.elevenlabs.io/v1/text-to-speech';
-const SYNTH_TIMEOUT_MS = 30_000;
-
-interface ElevenLabsTTSConfig {
-  apiKey: string;
+/**
+ * Voice entry mapping a language to a specific ElevenLabs voice.
+ *
+ * @param voiceId - ElevenLabs voice identifier
+ * @param name - Human-readable voice name (for logging)
+ */
+export interface VoiceEntry {
   voiceId: string;
-  modelId: string;
+  name: string;
 }
 
 /**
- * ElevenLabs WebSocket-based TTS stream that implements the TTSStream interface.
+ * Per-language voice map.
  *
- * Uses the ElevenLabs streaming input endpoint to send text and receive
- * base64-encoded μ-law 8 kHz audio chunks suitable for Twilio.
+ * Jessica (`cgSgspJ2msm6clMCkdW9`) — conversational, warm, playful, bright.
+ * Verified by ElevenLabs for English, German, and Spanish.
+ * Best-in-class for phone call naturalness across all three languages.
  *
- * The WebSocket connection is opened once via `connect()` and reused across
- * multiple `synthesize()` calls within a session. Call `close()` when done.
+ * Override individual voices via `ELEVENLABS_VOICE_EN`, `ELEVENLABS_VOICE_DE`,
+ * `ELEVENLABS_VOICE_ES` environment variables.
+ */
+export const VOICE_MAP: Record<SupportedLanguage, VoiceEntry> = {
+  en: {
+    voiceId: process.env.ELEVENLABS_VOICE_EN || "cgSgspJ2msm6clMCkdW9",
+    name: "Jessica",
+  },
+  de: {
+    voiceId: process.env.ELEVENLABS_VOICE_DE || "cgSgspJ2msm6clMCkdW9",
+    name: "Jessica",
+  },
+  es: {
+    voiceId: process.env.ELEVENLABS_VOICE_ES || "cgSgspJ2msm6clMCkdW9",
+    name: "Jessica",
+  },
+};
+
+const DEFAULT_LANGUAGE: SupportedLanguage = "en";
+
+/**
+ * Flash v2 — low-latency, multilingual. Compatible with English Conversational AI
+ * agents while also supporting DE, ES, and other languages.
+ */
+const DEFAULT_MODEL = "eleven_flash_v2";
+
+/**
+ * ElevenLabs Text-to-Speech stream over WebSocket.
+ *
+ * Connects to the ElevenLabs streaming TTS WebSocket endpoint and outputs
+ * base64-encoded audio chunks. The output format is `ulaw_8000` (mulaw 8 kHz)
+ * so chunks can be forwarded to Twilio without conversion.
+ *
+ * Supports runtime language switching via {@link setLanguage}. Changing the
+ * language closes the current WebSocket and reconnects with the new voice ID.
+ *
+ * @example
+ * ```ts
+ * const tts = new ElevenLabsTTSStream({
+ *   apiKey: process.env.ELEVENLABS_API_KEY!,
+ * });
+ * tts.onAudio = (base64) => queueAudioForTwilio(session, base64);
+ * await tts.connect();
+ * tts.synthesize("Hello, how can I help you today?");
+ *
+ * // Switch to German mid-call
+ * await tts.setLanguage("de");
+ * tts.synthesize("Hallo, wie kann ich Ihnen helfen?");
+ * ```
  */
 export class ElevenLabsTTSStream implements TTSStream {
   private ws: WebSocket | null = null;
-  private closed = false;
-  private readonly config: ElevenLabsTTSConfig;
-  private synthTimeout: ReturnType<typeof setTimeout> | null = null;
+  private apiKey: string;
+  private voiceId: string;
+  private model: string;
+  private language: SupportedLanguage;
 
-  constructor(config: ElevenLabsTTSConfig) {
-    this.config = config;
-  }
+  onAudio?: (audioBase64: string) => void;
 
-  private isWsOpen(): boolean {
-    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
-  }
-
-  /**
-   * Build the WebSocket URL with query parameters for voice, model, and output format.
-   * Uses ulaw_8000 output for direct Twilio compatibility (no conversion needed).
-   */
-  private buildWsUrl(): string {
-    const params = new URLSearchParams({
-      model_id: this.config.modelId,
-      output_format: 'ulaw_8000',
-    });
-    return `${WS_BASE_URL}/${this.config.voiceId}/stream-input?${params.toString()}`;
-  }
-
-  async connect(): Promise<void> {
-    if (this.closed) throw new Error(`${LOG_PREFIX} Stream already closed`);
-    if (this.isWsOpen()) return;
-
-    const url = this.buildWsUrl();
-    console.log(`${LOG_PREFIX} Connecting — voiceId=${this.config.voiceId} model=${this.config.modelId}`);
-
-    return new Promise<void>((resolve, reject) => {
-      const ws = new WebSocket(url, {
-        headers: {
-          'xi-api-key': this.config.apiKey,
-        },
-      } as unknown as string[]);
-
-      const timeout = setTimeout(() => {
-        ws.close();
-        reject(new Error(`${LOG_PREFIX} Connection timed out`));
-      }, 10_000);
-
-      ws.onopen = () => {
-        clearTimeout(timeout);
-        this.ws = ws;
-
-        // Send initial BOS (beginning of stream) message
-        const bos = JSON.stringify({
-          text: ' ',
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.75,
-          },
-          xi_api_key: this.config.apiKey,
-        });
-        ws.send(bos);
-
-        this.installIdleHandlers(ws);
-        console.log(`${LOG_PREFIX} Connected`);
-        logger.info('ElevenLabs TTS WebSocket connected');
-        resolve();
-      };
-
-      ws.onerror = (event: Event) => {
-        clearTimeout(timeout);
-        const errMsg = 'message' in event ? String((event as ErrorEvent).message) : 'WebSocket error';
-        console.error(`${LOG_PREFIX} Connection error: ${errMsg}`);
-        logger.error({ error: errMsg }, 'ElevenLabs TTS connection error');
-        reject(new Error(`${LOG_PREFIX} Connection error: ${errMsg}`));
-      };
-
-      ws.onclose = (event: CloseEvent) => {
-        clearTimeout(timeout);
-        if (!this.isWsOpen()) {
-          reject(new Error(`${LOG_PREFIX} Connection closed before open: code=${event.code} reason=${event.reason}`));
-        }
-      };
-    });
-  }
-
-  /**
-   * Ensure we have a live WebSocket connection, reconnecting if needed.
-   */
-  private async ensureConnected(): Promise<WebSocket> {
-    if (this.closed) throw new Error(`${LOG_PREFIX} Stream is closed`);
-    if (!this.isWsOpen()) {
-      console.log(`${LOG_PREFIX} Reconnecting (was disconnected)`);
-      await this.connect();
-    }
-    return this.ws!;
-  }
-
-  async synthesize(text: string): Promise<string> {
-    if (!text.trim()) return '';
-
-    const ws = await this.ensureConnected();
-    const reqId = crypto.randomUUID().substring(0, 8);
-    const truncated = text.length > 80 ? text.substring(0, 80) + '...' : text;
-    console.log(`${LOG_PREFIX} Synthesize start — reqId=${reqId} text="${truncated}"`);
-
-    return new Promise<string>((resolve, reject) => {
-      const audioChunks: Buffer[] = [];
-      let settled = false;
-
-      const settle = () => {
-        settled = true;
-        if (this.synthTimeout) {
-          clearTimeout(this.synthTimeout);
-          this.synthTimeout = null;
-        }
-      };
-
-      this.synthTimeout = setTimeout(() => {
-        if (!settled) {
-          settle();
-          console.error(`${LOG_PREFIX} Synthesis timed out — reqId=${reqId}`);
-          if (audioChunks.length > 0) {
-            const combined = Buffer.concat(audioChunks).toString('base64');
-            console.log(`${LOG_PREFIX} Returning partial audio on timeout — reqId=${reqId} chunks=${audioChunks.length}`);
-            resolve(combined);
-          } else {
-            reject(new Error(`${LOG_PREFIX} Synthesis timed out with no audio`));
-          }
-        }
-      }, SYNTH_TIMEOUT_MS);
-
-      ws.onmessage = (event: MessageEvent) => {
-        if (settled) return;
-
-        try {
-          const msg = JSON.parse(typeof event.data === 'string' ? event.data : event.data.toString());
-
-          if (msg.audio) {
-            const chunk = Buffer.from(msg.audio, 'base64');
-            audioChunks.push(chunk);
-          }
-
-          if (msg.isFinal) {
-            settle();
-            const combined = Buffer.concat(audioChunks).toString('base64');
-            const totalBytes = audioChunks.reduce((sum, b) => sum + b.length, 0);
-            console.log(`${LOG_PREFIX} Synthesize complete — reqId=${reqId} chunks=${audioChunks.length} bytes=${totalBytes}`);
-            logger.info({ reqId, chunks: audioChunks.length, bytes: totalBytes }, 'Synthesis complete');
-
-            this.installIdleHandlers(ws);
-            resolve(combined);
-          }
-
-          if (msg.error) {
-            settle();
-            console.error(`${LOG_PREFIX} Server error — reqId=${reqId} error=${JSON.stringify(msg.error)}`);
-            this.installIdleHandlers(ws);
-            reject(new Error(`${LOG_PREFIX} Server error: ${JSON.stringify(msg.error)}`));
-          }
-        } catch (parseErr) {
-          console.error(`${LOG_PREFIX} Failed to parse message:`, parseErr);
-          logger.warn({ parseErr }, 'Failed to parse TTS message');
-        }
-      };
-
-      ws.onerror = (event: Event) => {
-        if (settled) return;
-        const errMsg = 'message' in event ? String((event as ErrorEvent).message) : 'WebSocket error';
-        console.error(`${LOG_PREFIX} WebSocket error during synthesis — reqId=${reqId} error=${errMsg}`);
-        logger.error({ error: errMsg, reqId }, 'TTS WebSocket error');
-        settle();
-        this.ws = null;
-        reject(new Error(`${LOG_PREFIX} WebSocket error: ${errMsg}`));
-      };
-
-      ws.onclose = (event: CloseEvent) => {
-        if (this.ws === ws) this.ws = null;
-        console.log(`${LOG_PREFIX} WebSocket closed during synthesis — reqId=${reqId} code=${event.code} reason="${event.reason}"`);
-        if (!settled) {
-          settle();
-          if (audioChunks.length > 0) {
-            const combined = Buffer.concat(audioChunks).toString('base64');
-            console.log(`${LOG_PREFIX} Returning partial audio — reqId=${reqId} chunks=${audioChunks.length}`);
-            resolve(combined);
-          } else {
-            reject(new Error(`${LOG_PREFIX} WebSocket closed unexpectedly: code=${event.code} reason=${event.reason}`));
-          }
-        }
-      };
-
-      // Send the text for synthesis, then send EOS (end of stream) to flush
-      ws.send(JSON.stringify({
-        text: text,
-        try_trigger_generation: true,
-      }));
-
-      ws.send(JSON.stringify({
-        text: '',
-      }));
-    });
-  }
-
-  /**
-   * Install minimal handlers on the WebSocket while no synthesis is in flight.
-   */
-  private installIdleHandlers(ws: WebSocket): void {
-    ws.onmessage = () => {};
-    ws.onerror = () => {};
-    ws.onclose = (event: CloseEvent) => {
-      if (this.ws === ws) {
-        this.ws = null;
-        console.log(`${LOG_PREFIX} Persistent WS closed while idle — code=${event.code}`);
-      }
-    };
-  }
-
-  close(): void {
-    this.closed = true;
-
-    if (this.synthTimeout) {
-      clearTimeout(this.synthTimeout);
-      this.synthTimeout = null;
-    }
-
-    if (this.ws) {
-      console.log(`${LOG_PREFIX} Closed`);
-      this.ws.close();
-      this.ws = null;
-    }
+  constructor(opts: {
+    apiKey: string;
+    voiceId?: string;
+    model?: string;
+    language?: SupportedLanguage;
+  }) {
+    this.apiKey = opts.apiKey;
+    this.language = opts.language ?? DEFAULT_LANGUAGE;
+    this.voiceId =
+      opts.voiceId ?? VOICE_MAP[this.language]?.voiceId ?? VOICE_MAP.en.voiceId;
+    this.model = opts.model ?? DEFAULT_MODEL;
   }
 
   get isConnected(): boolean {
-    return this.isWsOpen();
+    return this.ws?.readyState === WebSocket.OPEN;
   }
-}
 
-/**
- * Create a new ElevenLabs TTS stream using environment configuration.
- *
- * Caller should `await stream.connect()` to open the WebSocket,
- * then call `stream.synthesize(text)` for each turn.
- * Call `stream.close()` when the session ends.
- */
-export function createElevenLabsTTSStream(): ElevenLabsTTSStream {
-  const apiKey = process.env.ELEVENLABS_API_KEY;
-  if (!apiKey) throw new Error('ELEVENLABS_API_KEY is required for ElevenLabs TTS');
+  get currentLanguage(): SupportedLanguage {
+    return this.language;
+  }
 
-  const voiceId = process.env.ELEVENLABS_VOICE_ID || DEFAULT_VOICE_ID;
-  const modelId = process.env.ELEVENLABS_TTS_MODEL || DEFAULT_MODEL_ID;
+  get currentVoiceId(): string {
+    return this.voiceId;
+  }
 
-  console.log(`${LOG_PREFIX} Creating stream — voiceId=${voiceId} model=${modelId}`);
+  async connect(): Promise<void> {
+    const url =
+      `wss://api.elevenlabs.io/v1/text-to-speech/${this.voiceId}/stream-input` +
+      `?model_id=${this.model}&output_format=ulaw_8000`;
 
-  return new ElevenLabsTTSStream({ apiKey, voiceId, modelId });
-}
+    return new Promise<void>((resolve, reject) => {
+      this.ws = new WebSocket(url);
 
-/** Return the name of the default ElevenLabs voice ID. */
-export function getDefaultVoiceId(): string {
-  return DEFAULT_VOICE_ID;
+      const onOpen = () => {
+        this.ws!.send(
+          JSON.stringify({
+            text: " ",
+            xi_api_key: this.apiKey,
+            voice_settings: {
+              stability: 0.5,
+              similarity_boost: 0.8,
+              use_speaker_boost: false,
+            },
+          }),
+        );
+        logger.info(
+          { voiceId: this.voiceId, language: this.language, model: this.model },
+          "[BELLA:TTS:11LABS] Connected and ready",
+        );
+        resolve();
+      };
+
+      const onMessage = (event: MessageEvent) => {
+        let msg: Record<string, unknown>;
+        try {
+          msg = JSON.parse(String(event.data));
+        } catch {
+          logger.warn("[BELLA:TTS:11LABS] Non-JSON message received");
+          return;
+        }
+
+        if (typeof msg.audio === "string" && msg.audio.length > 0) {
+          this.onAudio?.(msg.audio);
+        }
+
+        if (msg.error) {
+          logger.error({ msg }, "[BELLA:TTS:11LABS] Error from server");
+        }
+      };
+
+      const onError = (ev: Event) => {
+        logger.error({ ev }, "[BELLA:TTS:11LABS] WebSocket error");
+        reject(new Error("ElevenLabs TTS WebSocket connection failed"));
+      };
+
+      const onClose = () => {
+        logger.info("[BELLA:TTS:11LABS] WebSocket closed");
+        this.ws = null;
+      };
+
+      this.ws.addEventListener("open", onOpen);
+      this.ws.addEventListener("message", onMessage);
+      this.ws.addEventListener("error", onError);
+      this.ws.addEventListener("close", onClose);
+    });
+  }
+
+  /**
+   * Switch the TTS voice to the one mapped to the given language.
+   *
+   * The ElevenLabs streaming WebSocket encodes the voice ID in the URL,
+   * so changing voice requires closing the current connection and opening
+   * a new one. The `onAudio` callback is preserved across reconnections.
+   *
+   * @param lang - Target language code (`en`, `de`, or `es`)
+   * @throws If reconnection fails
+   */
+  async setLanguage(lang: SupportedLanguage): Promise<void> {
+    const entry = VOICE_MAP[lang];
+    if (!entry) {
+      logger.warn({ lang }, "[BELLA:TTS:11LABS] Unsupported language requested");
+      return;
+    }
+
+    if (lang === this.language && entry.voiceId === this.voiceId) {
+      return;
+    }
+
+    const previousLang = this.language;
+    this.language = lang;
+    this.voiceId = entry.voiceId;
+
+    logger.info(
+      {
+        language: lang,
+        voice: entry.name,
+        voiceId: entry.voiceId,
+        previousLanguage: previousLang,
+      },
+      "[BELLA:TTS:11LABS] Voice changed",
+    );
+
+    if (this.isConnected) {
+      this.close();
+      await this.connect();
+    }
+  }
+
+  synthesize(text: string): void {
+    if (!this.isConnected) {
+      logger.warn("[BELLA:TTS:11LABS] Cannot synthesize — not connected");
+      return;
+    }
+
+    this.ws!.send(
+      JSON.stringify({
+        text,
+        try_trigger_generation: true,
+      }),
+    );
+  }
+
+  close(): void {
+    if (this.ws) {
+      try {
+        this.ws.send(JSON.stringify({ text: "" }));
+        this.ws.close();
+      } catch {
+        // already closed
+      }
+      this.ws = null;
+    }
+  }
 }

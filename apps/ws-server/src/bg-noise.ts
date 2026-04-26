@@ -1,127 +1,193 @@
-import { readFileSync } from 'fs';
-import path from 'path';
-import { WaveFile } from 'wavefile';
+/**
+ * Background noise generator that produces continuous low-level call-center
+ * ambiance for the Twilio audio stream.
+ *
+ * During silence (nobody speaking) it sends standalone noise chunks so the
+ * caller hears a realistic environment instead of dead air. During agent
+ * speech it mixes noise into the voice audio at a subtle 4% level.
+ *
+ * Audio format: mu-law 8-bit, 8 kHz, mono (Twilio standard).
+ * Each chunk = 160 bytes = 20 ms at 8 kHz.
+ *
+ * @module bg-noise
+ */
 
-const BG_NOISE_PATH = path.join(import.meta.dirname, 'bg-noise', 'call-center.wav');
+import type { ServerWebSocket } from "bun";
+import { linearToMulaw } from "./audio-utils.ts";
 
-let bgSamples: Float64Array | null = null;
+/** 20 ms at 8 kHz = 160 samples (1 byte each in mu-law). */
+const CHUNK_BYTES = 160;
 
-function loadBgNoise(): Float64Array {
-  if (bgSamples) return bgSamples;
-  const buf = readFileSync(BG_NOISE_PATH);
-  const wav = new WaveFile(buf);
-  bgSamples = wav.getSamples() as Float64Array;
-  console.log(
-    `[BELLA:BGNOISE] Loaded background noise — ${bgSamples.length} samples (~${(bgSamples.length / 8000).toFixed(1)}s)`,
-  );
-  return bgSamples;
-}
+/** How often we send a standalone noise chunk (ms). */
+const SEND_INTERVAL_MS = 20;
 
-const MULAW_BIAS = 0x84;
+/** After this many ms without agent audio, resume standalone noise. */
+const RESUME_DELAY_MS = 100;
 
-function linearToMulaw(sample: number): number {
-  const sign = sample < 0 ? 0x80 : 0;
-  let mag = Math.min(Math.abs(sample), 32635);
-  mag += MULAW_BIAS;
-
-  let exponent = 7;
-  for (let expMask = 0x4000; (mag & expMask) === 0 && exponent > 0; exponent--, expMask >>= 1) {
-    /* find segment */
-  }
-  const mantissa = (mag >> (exponent + 3)) & 0x0F;
-  return ~(sign | (exponent << 4) | mantissa) & 0xFF;
-}
-
-function mulawToLinear(mulaw: number): number {
-  const mu = ~mulaw & 0xFF;
-  const sign = mu & 0x80;
-  const exponent = (mu >> 4) & 0x07;
-  const mantissa = mu & 0x0F;
-  let magnitude = ((mantissa << 1) | 0x21) << (exponent + 2);
-  magnitude -= MULAW_BIAS;
-  return sign ? -magnitude : magnitude;
-}
-
-const DEFAULT_BG_GAIN = 0.04;
+/** Amplitude of the noise in 16-bit PCM space (~5% of full scale). */
+const NOISE_AMPLITUDE = 1600;
 
 /**
- * Mix base64-encoded mulaw TTS audio with looping call-center background noise.
+ * Pre-generate a looping noise buffer to avoid per-chunk random generation.
  *
- * The mixing is done at the PCM level: mulaw → PCM16 → linear mix → PCM16 → mulaw.
- * The background audio loops seamlessly using a seek position that persists across
- * chunks within a session.
- *
- * @param mulawBase64 - TTS audio chunk in mulaw 8kHz base64 (from Gradium TTS)
- * @param bgSeekPosition - Current position in the background noise loop (per session)
- * @param bgGain - Background volume relative to voice (0.0–1.0, default 0.04)
- * @returns Object with `mixed` (base64 mulaw) and `newSeekPosition`
+ * Produces ~1 second (8000 samples) of soft pink-ish noise — low-amplitude
+ * random values smoothed by a simple moving-average filter to remove harsh
+ * high-frequency content and approximate distant office chatter.
  */
-export function mixWithBackground(
-  mulawBase64: string,
-  bgSeekPosition: number,
-  bgGain: number = DEFAULT_BG_GAIN,
-): { mixed: string; newSeekPosition: number } {
-  const mulawBuf = Buffer.from(mulawBase64, 'base64');
-  const result = mixChunkWithBackground(mulawBuf, bgSeekPosition, bgGain);
-  return { mixed: result.mixed.toString('base64'), newSeekPosition: result.newSeekPosition };
+function generateNoiseLoop(): Int16Array {
+  const length = 8000;
+  const raw = new Float64Array(length);
+
+  // Box-Muller gaussian random
+  for (let i = 0; i < length; i++) {
+    const u1 = Math.random() || 1e-10;
+    const u2 = Math.random();
+    raw[i] = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  }
+
+  // Simple 5-tap moving average low-pass to soften the noise
+  const smoothed = new Int16Array(length);
+  for (let i = 0; i < length; i++) {
+    let sum = 0;
+    let count = 0;
+    for (let j = -2; j <= 2; j++) {
+      const idx = i + j;
+      if (idx >= 0 && idx < length) {
+        sum += raw[idx]!;
+        count++;
+      }
+    }
+    smoothed[i] = Math.round((sum / count) * NOISE_AMPLITUDE);
+  }
+
+  return smoothed;
 }
 
 /**
- * Mix a raw mulaw audio buffer with looping call-center background noise.
+ * Manages continuous background noise for a single call.
  *
- * Operates on raw Buffers (not base64) for use in the continuous audio loop.
- * Each byte in the input is one mulaw sample (8kHz mono).
- *
- * @param mulawChunk - Raw mulaw audio buffer (160 bytes = 20ms at 8kHz)
- * @param bgSeekPosition - Current position in the background noise loop
- * @param bgGain - Background volume (0.0–1.0, default 0.04)
- * @returns Object with `mixed` (raw mulaw Buffer) and `newSeekPosition`
+ * Lifecycle:
+ * 1. `start(streamSid, twilioWs)` — begins sending standalone noise chunks
+ * 2. When agent audio arrives, caller invokes `pauseStandalone()` then
+ *    `mixWithVoice(voiceBase64)` for each voice chunk
+ * 3. After a ~100 ms gap with no voice audio, standalone noise auto-resumes
+ * 4. `stop()` — tears down the timer on call close
  */
-export function mixChunkWithBackground(
-  mulawChunk: Buffer,
-  bgSeekPosition: number,
-  bgGain: number = DEFAULT_BG_GAIN,
-): { mixed: Buffer; newSeekPosition: number } {
-  const bg = loadBgNoise();
-  const out = Buffer.allocUnsafe(mulawChunk.length);
-  const voiceGain = 1 - bgGain;
-  let seekPos = bgSeekPosition;
+export class BackgroundNoiseGenerator {
+  private noiseLoop: Int16Array;
+  private noiseMulawLoop: Uint8Array;
+  private loopOffset = 0;
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private streamSid: string | null = null;
+  private twilioWs: ServerWebSocket<unknown> | null = null;
+  private standalonePaused = false;
+  private resumeTimer: ReturnType<typeof setTimeout> | null = null;
 
-  for (let i = 0; i < mulawChunk.length; i++) {
-    const voicePcm = mulawToLinear(mulawChunk[i]!);
-    seekPos = (seekPos + 1) % bg.length;
-    const mixedSample = (voicePcm * voiceGain) + (bg[seekPos]! * bgGain);
-    out[i] = linearToMulaw(Math.max(-32768, Math.min(32767, Math.round(mixedSample))));
+  constructor() {
+    this.noiseLoop = generateNoiseLoop();
+
+    // Pre-encode the entire loop to mu-law for standalone sends
+    this.noiseMulawLoop = new Uint8Array(this.noiseLoop.length);
+    for (let i = 0; i < this.noiseLoop.length; i++) {
+      this.noiseMulawLoop[i] = linearToMulaw(this.noiseLoop[i]!);
+    }
   }
 
-  return { mixed: out, newSeekPosition: seekPos };
-}
+  /**
+   * Begin sending standalone background noise chunks every 20 ms.
+   *
+   * @param streamSid - Twilio stream identifier for this call
+   * @param twilioWs  - WebSocket connection to Twilio
+   */
+  start(streamSid: string, twilioWs: ServerWebSocket<unknown>): void {
+    this.streamSid = streamSid;
+    this.twilioWs = twilioWs;
+    this.loopOffset = 0;
+    this.standalonePaused = false;
 
-/**
- * Generate a background-noise-only chunk in mulaw format.
- *
- * Used by the continuous audio loop to fill silence between TTS responses
- * so the caller always hears ambient call-center noise.
- *
- * @param chunkSize - Number of mulaw bytes to generate (160 = 20ms at 8kHz)
- * @param bgSeekPosition - Current position in the background noise loop
- * @param bgGain - Background volume (0.0–1.0, default 0.04)
- * @returns Object with `chunk` (base64 mulaw) and `newSeekPosition`
- */
-export function getBackgroundOnlyChunk(
-  chunkSize: number,
-  bgSeekPosition: number,
-  bgGain: number = DEFAULT_BG_GAIN,
-): { chunk: string; newSeekPosition: number } {
-  const bg = loadBgNoise();
-  const out = Buffer.allocUnsafe(chunkSize);
-  let seekPos = bgSeekPosition;
-
-  for (let i = 0; i < chunkSize; i++) {
-    seekPos = (seekPos + 1) % bg.length;
-    const pcmSample = Math.max(-32768, Math.min(32767, Math.round(bg[seekPos]! * bgGain)));
-    out[i] = linearToMulaw(pcmSample);
+    this.timer = setInterval(() => {
+      if (this.standalonePaused || !this.twilioWs || !this.streamSid) return;
+      this.sendNoiseChunk();
+    }, SEND_INTERVAL_MS);
   }
 
-  return { chunk: out.toString('base64'), newSeekPosition: seekPos };
+  /** Stop all timers and release resources. */
+  stop(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    if (this.resumeTimer) {
+      clearTimeout(this.resumeTimer);
+      this.resumeTimer = null;
+    }
+    this.twilioWs = null;
+    this.streamSid = null;
+  }
+
+  /**
+   * Pause the standalone noise stream (called when agent voice starts).
+   * After {@link RESUME_DELAY_MS} ms without another pause, standalone
+   * noise automatically resumes.
+   */
+  pauseStandalone(): void {
+    this.standalonePaused = true;
+
+    if (this.resumeTimer) {
+      clearTimeout(this.resumeTimer);
+    }
+    this.resumeTimer = setTimeout(() => {
+      this.standalonePaused = false;
+      this.resumeTimer = null;
+    }, RESUME_DELAY_MS);
+  }
+
+  /**
+   * Return raw PCM noise samples for mixing into voice audio.
+   *
+   * Advances the internal loop cursor so consecutive calls produce
+   * a continuous noise stream without gaps or repeats.
+   *
+   * @param length - Number of 16-bit PCM samples to return
+   * @returns Int16Array of noise samples at 8 kHz
+   */
+  getNoiseChunkPCM(length: number): Int16Array {
+    const out = new Int16Array(length);
+    for (let i = 0; i < length; i++) {
+      out[i] = this.noiseLoop[this.loopOffset]!;
+      this.advanceOffset();
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private
+  // ---------------------------------------------------------------------------
+
+  /** Send one 20 ms chunk of standalone noise to Twilio. */
+  private sendNoiseChunk(): void {
+    const chunk = Buffer.alloc(CHUNK_BYTES);
+
+    for (let i = 0; i < CHUNK_BYTES; i++) {
+      chunk[i] = this.noiseMulawLoop[this.loopOffset]!;
+      this.advanceOffset();
+    }
+
+    try {
+      this.twilioWs!.send(
+        JSON.stringify({
+          event: "media",
+          streamSid: this.streamSid,
+          media: { payload: chunk.toString("base64") },
+        }),
+      );
+    } catch {
+      // swallow — WS may have closed between check and send
+    }
+  }
+
+  /** Advance the loop cursor, wrapping at the end. */
+  private advanceOffset(): void {
+    this.loopOffset = (this.loopOffset + 1) % this.noiseLoop.length;
+  }
 }

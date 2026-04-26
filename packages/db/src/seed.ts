@@ -79,7 +79,7 @@ async function seed() {
   const [customer4] = await db
     .insert(customers)
     .values({
-      phone: '+493075676653',
+      phone: '+491773612296',
       firstName: 'Alex',
       lastName: 'Hun',
       email: 'alex@email.com',
@@ -97,8 +97,8 @@ async function seed() {
       planName: 'Comprehensive Auto Shield',
       status: 'active',
       premium: '189.50',
-      startDate: '2024-01-15',
-      endDate: '2025-01-15',
+      startDate: '2026-01-15',
+      endDate: '2027-01-15',
       details: {
         vehicleMake: 'Toyota',
         vehicleModel: 'Camry',
@@ -119,8 +119,8 @@ async function seed() {
       planName: 'HomeGuard Premium',
       status: 'active',
       premium: '125.00',
-      startDate: '2024-03-01',
-      endDate: '2025-03-01',
+      startDate: '2026-03-01',
+      endDate: '2027-03-01',
       details: {
         propertyType: 'single_family',
         squareFeet: 2200,
@@ -140,8 +140,8 @@ async function seed() {
       planName: 'Basic Auto Coverage',
       status: 'active',
       premium: '95.00',
-      startDate: '2024-06-01',
-      endDate: '2025-06-01',
+      startDate: '2026-06-01',
+      endDate: '2027-06-01',
       details: {
         vehicleMake: 'Honda',
         vehicleModel: 'Civic',
@@ -162,8 +162,8 @@ async function seed() {
       planName: 'Family Health Plus',
       status: 'active',
       premium: '450.00',
-      startDate: '2024-01-01',
-      endDate: '2024-12-31',
+      startDate: '2026-01-01',
+      endDate: '2026-12-31',
       coveredItems: 'Hospitalization, surgery, prescription drugs, preventive care, mental health services, emergency room visits',
       notCoveredItems: 'Cosmetic procedures, experimental treatments, dental (separate plan), vision (separate plan)',
     })
@@ -177,8 +177,8 @@ async function seed() {
       planName: 'Personal Liability Shield',
       status: 'active',
       premium: '75.00',
-      startDate: '2024-04-01',
-      endDate: '2025-04-01',
+      startDate: '2026-04-01',
+      endDate: '2027-04-01',
       details: {
         coverageLimit: 500000,
         deductible: 250,
@@ -198,7 +198,7 @@ async function seed() {
       type: 'auto_collision',
       status: 'gathering_info',
       description: 'Rear-ended at intersection on Main St.',
-      incidentDate: '2024-10-12',
+      incidentDate: '2026-10-12',
       incidentLocation: 'Main St & 5th Ave, Springfield, IL',
     })
     .returning();
@@ -211,7 +211,7 @@ async function seed() {
       type: 'auto_theft',
       status: 'submitted',
       description: 'Vehicle stolen from apartment parking garage.',
-      incidentDate: '2024-11-05',
+      incidentDate: '2026-11-05',
       incidentLocation: '456 Oak Ave Parking Garage, Portland, OR',
     })
     .returning();
