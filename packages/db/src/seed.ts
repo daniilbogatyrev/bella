@@ -1,37 +1,30 @@
 import { getDb } from './client';
-import { adminUsers, customers, policies, claims, claimEvents, callSessions, transcripts } from './schema';
-import { eq, sql } from 'drizzle-orm';
+import { adminUsers, customers, policies, claims, claimEvents, callSessions, transcripts, evidence } from './schema';
 
 async function seed() {
   const db = getDb();
 
   console.log('Seeding database...');
 
-  // Seed default admin user with a password so they can log in immediately
+  // Delete all existing data (child tables first to respect foreign keys)
+  await db.delete(evidence);
+  await db.delete(transcripts);
+  await db.delete(claimEvents);
+  await db.delete(callSessions);
+  await db.delete(claims);
+  await db.delete(policies);
+  await db.delete(customers);
+  await db.delete(adminUsers);
+  console.log('🗑️  Cleared existing data');
+
   const defaultPasswordHash = await Bun.password.hash('123456789');
   await db.insert(adminUsers).values({
     email: 'idevsubham@gmail.com',
     name: 'Subham',
     role: 'admin',
     passwordHash: defaultPasswordHash,
-  }).onConflictDoUpdate({
-    target: adminUsers.email,
-    set: {
-      name: 'Subham',
-      role: 'admin',
-      passwordHash: defaultPasswordHash,
-    },
   });
   console.log('✅ Default admin seeded');
-
-  const existing = await db.query.customers.findFirst({
-    where: eq(customers.phone, '+15551234567'),
-  });
-
-  if (existing) {
-    console.log('Seed data already exists, skipping insert.');
-    process.exit(0);
-  }
 
   const [customer1] = await db
     .insert(customers)
@@ -69,7 +62,18 @@ async function seed() {
     })
     .returning();
 
-  console.log(`Inserted 3 customers: ${customer1!.id}, ${customer2!.id}, ${customer3!.id}`);
+  const [customer4] = await db
+    .insert(customers)
+    .values({
+      phone: '+493075676653',
+      firstName: 'Alex',
+      lastName: 'Hun',
+      email: 'alex@email.com',
+      address: 'Friedrichstraße 100, 10117 Berlin, Germany',
+    })
+    .returning();
+
+  console.log(`Inserted 4 customers: ${customer1!.id}, ${customer2!.id}, ${customer3!.id}, ${customer4!.id}`);
 
   const [policy1] = await db
     .insert(policies)
@@ -151,7 +155,26 @@ async function seed() {
     })
     .returning();
 
-  console.log(`Inserted 4 policies: ${policy1!.id}, ${policy2!.id}, ${policy3!.id}, ${policy4!.id}`);
+  const [policy5] = await db
+    .insert(policies)
+    .values({
+      customerId: customer4!.id,
+      type: 'liability',
+      planName: 'Personal Liability Shield',
+      status: 'active',
+      premium: '75.00',
+      startDate: '2024-04-01',
+      endDate: '2025-04-01',
+      details: {
+        coverageLimit: 500000,
+        deductible: 250,
+      },
+      coveredItems: 'Bodily injury to others, property damage to others, legal defense costs, medical payments to others',
+      notCoveredItems: 'Intentional acts, business activities, professional services, motorized vehicle incidents (covered under auto)',
+    })
+    .returning();
+
+  console.log(`Inserted 5 policies: ${policy1!.id}, ${policy2!.id}, ${policy3!.id}, ${policy4!.id}, ${policy5!.id}`);
 
   const [claim1] = await db
     .insert(claims)

@@ -5,21 +5,14 @@ import { eq, ilike, desc, or, type SQL } from 'drizzle-orm';
 import { formatDate, formatDuration, formatPhone } from '@/lib/format';
 import { Phone } from 'lucide-react';
 import { TestCallDialog } from '@/components/calls/test-call-dialog';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 
-const statusColors: Record<string, string> = {
+const statusStyles: Record<string, string> = {
   active:
-    'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+    'bg-green-50 text-green-700 ring-green-600/20 dark:bg-green-500/10 dark:text-green-400 dark:ring-green-500/20',
   completed:
-    'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
-  failed: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+    'bg-gray-50 text-gray-600 ring-gray-500/10 dark:bg-gray-500/10 dark:text-gray-400 dark:ring-gray-500/20',
+  failed:
+    'bg-red-50 text-red-700 ring-red-600/10 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/20',
 };
 
 const statusLabels: Record<string, string> = {
@@ -102,13 +95,9 @@ export default async function CallsPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="font-display text-3xl font-bold tracking-tight">Calls</h1>
-          <p className="text-muted-foreground">
-            Call history and session recordings
-          </p>
-        </div>
+      {/* Page header */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold tracking-tight">Calls</h1>
         <TestCallDialog />
       </div>
 
@@ -119,12 +108,12 @@ export default async function CallsPage({
           name="q"
           placeholder="Search by phone, customer, or summary…"
           defaultValue={query ?? ''}
-          className="h-8 w-64 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          className="h-8 w-64 rounded-md border border-input bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring dark:bg-input/30"
         />
         <select
           name="status"
           defaultValue={statusFilter ?? ''}
-          className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          className="h-8 rounded-md border border-input bg-transparent px-3 text-sm outline-none transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring dark:bg-input/30"
         >
           <option value="">All Statuses</option>
           {allStatuses.map((s) => (
@@ -135,7 +124,7 @@ export default async function CallsPage({
         </select>
         <button
           type="submit"
-          className="inline-flex h-8 items-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground"
+          className="shadow-sm shadow-black/20 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 text-xs h-7 font-medium transition-colors"
         >
           Filter
         </button>
@@ -145,7 +134,7 @@ export default async function CallsPage({
       {callRows.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16 text-center">
           <Phone className="size-10 text-muted-foreground/50 mb-3" />
-          <h3 className="font-display text-lg font-medium">No calls found</h3>
+          <h3 className="text-lg font-medium">No calls found</h3>
           <p className="text-sm text-muted-foreground mt-1">
             {query || statusFilter
               ? 'Try adjusting your search or filter.'
@@ -153,30 +142,30 @@ export default async function CallsPage({
           </p>
         </div>
       ) : (
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Phone</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Started</TableHead>
-                <TableHead>Duration</TableHead>
-                <TableHead>Summary</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+        <div className="rounded-lg border bg-card overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="border-b bg-muted/50">
+              <tr>
+                <th className="h-12 px-4 text-left font-medium text-muted-foreground">Phone</th>
+                <th className="h-12 px-4 text-left font-medium text-muted-foreground">Customer</th>
+                <th className="h-12 px-4 text-left font-medium text-muted-foreground">Status</th>
+                <th className="h-12 px-4 text-left font-medium text-muted-foreground">Started</th>
+                <th className="h-12 px-4 text-left font-medium text-muted-foreground">Duration</th>
+                <th className="h-12 px-4 text-left font-medium text-muted-foreground">Summary</th>
+              </tr>
+            </thead>
+            <tbody>
               {callRows.map((row) => (
-                <TableRow key={row.id}>
-                  <TableCell>
+                <tr key={row.id} className="border-b transition-colors hover:bg-muted/50">
+                  <td className="p-4">
                     <Link
                       href={`/calls/${row.id}`}
                       className="font-mono text-primary hover:underline"
                     >
                       {formatPhone(row.callerPhone)}
                     </Link>
-                  </TableCell>
-                  <TableCell>
+                  </td>
+                  <td className="p-4">
                     {row.customerId ? (
                       <Link
                         href={`/customers/${row.customerId}`}
@@ -189,31 +178,31 @@ export default async function CallsPage({
                         Unknown
                       </span>
                     )}
-                  </TableCell>
-                  <TableCell>
+                  </td>
+                  <td className="p-4">
                     <span
-                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[row.status] ?? ''}`}
+                      className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${statusStyles[row.status] ?? ''}`}
                     >
                       {statusLabels[row.status] ?? row.status}
                     </span>
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">
+                  </td>
+                  <td className="p-4 whitespace-nowrap">
                     {formatDate(row.startedAt)}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">
+                  </td>
+                  <td className="p-4 whitespace-nowrap">
                     {formatDuration(row.startedAt, row.endedAt)}
-                  </TableCell>
-                  <TableCell className="max-w-xs truncate">
+                  </td>
+                  <td className="p-4 max-w-xs truncate">
                     {row.summary || (
                       <span className="italic text-muted-foreground">
                         No summary
                       </span>
                     )}
-                  </TableCell>
-                </TableRow>
+                  </td>
+                </tr>
               ))}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
         </div>
       )}
     </div>

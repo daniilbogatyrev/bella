@@ -14,7 +14,6 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Separator } from '@/components/ui/separator';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -40,20 +39,30 @@ export function SidebarNav({ onLinkClick }: { onLinkClick?: () => void }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="px-4 py-5">
+      {/* Logo area */}
+      <div className="px-5 py-5">
         <Link
           href="/dashboard"
-          className="font-display text-xl font-bold tracking-tight"
+          className="flex items-center gap-2"
           onClick={onLinkClick}
         >
-          Bella
+          <span
+            className="inline-block h-6 w-1.5 rounded-full"
+            style={{
+              background: 'linear-gradient(180deg, #9B99FE 0%, #2BC8B7 100%)',
+            }}
+          />
+          <span className="font-display text-xl font-bold tracking-tight">
+            Bella
+          </span>
         </Link>
-        <p className="text-xs text-muted-foreground">Insurance Agent Dashboard</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Insurance Agent Dashboard
+        </p>
       </div>
 
-      <Separator />
-
-      <nav className="flex-1 space-y-1 px-2 py-3">
+      {/* Navigation */}
+      <nav className="flex-1 space-y-1 px-3 py-2">
         {navItems.map((item) => {
           const isActive =
             pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -63,10 +72,10 @@ export function SidebarNav({ onLinkClick }: { onLinkClick?: () => void }) {
               href={item.href}
               onClick={onLinkClick}
               className={cn(
-                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+                'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors duration-200',
                 isActive
-                  ? 'bg-muted font-semibold text-foreground'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                  ? 'bg-accent text-foreground font-medium'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground',
               )}
             >
               <item.icon className="size-4" />
@@ -76,9 +85,8 @@ export function SidebarNav({ onLinkClick }: { onLinkClick?: () => void }) {
         })}
       </nav>
 
-      <Separator />
-
-      <div className="p-4">
+      {/* User section */}
+      <div className="border-t p-4">
         {session?.user ? (
           <div className="flex items-center gap-3">
             <Avatar className="size-8">
@@ -101,6 +109,7 @@ export function SidebarNav({ onLinkClick }: { onLinkClick?: () => void }) {
             <Button
               variant="ghost"
               size="icon-sm"
+              className="hover:bg-accent hover:text-accent-foreground rounded-md"
               onClick={() => signOut({ callbackUrl: '/login' })}
               aria-label="Sign out"
             >
@@ -121,7 +130,7 @@ export function SidebarNav({ onLinkClick }: { onLinkClick?: () => void }) {
 
 export function Sidebar() {
   return (
-    <aside className="hidden w-64 shrink-0 border-r bg-background md:block">
+    <aside className="fixed inset-y-0 left-0 z-10 hidden w-64 flex-col border-r bg-background sm:flex">
       <SidebarNav />
     </aside>
   );

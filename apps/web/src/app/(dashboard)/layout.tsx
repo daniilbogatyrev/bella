@@ -9,12 +9,12 @@ export default function DashboardLayout({
 }) {
   return (
     <Providers>
-      <div className="flex h-screen">
+      <div className="min-h-screen bg-background">
         <Sidebar />
-        <main className="flex-1 overflow-auto">
+        <div className="sm:ml-64">
           <Header />
-          <div className="p-6">{children}</div>
-        </main>
+          <main className="p-4 sm:p-6">{children}</main>
+        </div>
       </div>
     </Providers>
   );

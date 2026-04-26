@@ -2,30 +2,25 @@ import Link from 'next/link';
 import { getDb } from '@/lib/db';
 import { claims, customers, claimStatusEnum } from '@bella/db';
 import { eq, ilike, desc, or, type SQL } from 'drizzle-orm';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { NewClaimDialog } from '@/components/claims/new-claim-dialog';
 
-const statusColors: Record<string, string> = {
-  draft: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
+const statusStyles: Record<string, string> = {
+  draft:
+    'bg-gray-50 text-gray-600 ring-gray-500/10 dark:bg-gray-500/10 dark:text-gray-400 dark:ring-gray-500/20',
   gathering_info:
-    'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+    'bg-yellow-50 text-yellow-700 ring-yellow-600/20 dark:bg-yellow-500/10 dark:text-yellow-400 dark:ring-yellow-500/20',
   ready_for_review:
-    'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+    'bg-blue-50 text-blue-700 ring-blue-700/10 dark:bg-blue-500/10 dark:text-blue-400 dark:ring-blue-500/20',
   submitted:
-    'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400',
+    'bg-indigo-50 text-indigo-700 ring-indigo-700/10 dark:bg-indigo-500/10 dark:text-indigo-400 dark:ring-indigo-500/20',
   under_review:
-    'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+    'bg-orange-50 text-orange-700 ring-orange-600/20 dark:bg-orange-500/10 dark:text-orange-400 dark:ring-orange-500/20',
   approved:
-    'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-  denied: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-  closed: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
+    'bg-green-50 text-green-700 ring-green-600/20 dark:bg-green-500/10 dark:text-green-400 dark:ring-green-500/20',
+  denied:
+    'bg-red-50 text-red-700 ring-red-600/10 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/20',
+  closed:
+    'bg-gray-50 text-gray-600 ring-gray-500/10 dark:bg-gray-500/10 dark:text-gray-400 dark:ring-gray-500/20',
 };
 
 const statusLabels: Record<string, string> = {
@@ -104,13 +99,9 @@ export default async function ClaimsPage({
 
   return (
     <div className="space-y-6">
+      {/* Page header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="font-display text-3xl font-bold tracking-tight">Claims</h1>
-          <p className="text-muted-foreground">
-            Manage and track insurance claims
-          </p>
-        </div>
+        <h1 className="text-xl font-bold tracking-tight">Claims</h1>
         <NewClaimDialog />
       </div>
 
@@ -121,12 +112,12 @@ export default async function ClaimsPage({
           name="q"
           placeholder="Search by customer or description…"
           defaultValue={query ?? ''}
-          className="h-8 w-64 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          className="h-8 w-64 rounded-md border border-input bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring dark:bg-input/30"
         />
         <select
           name="status"
           defaultValue={statusFilter ?? ''}
-          className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          className="h-8 rounded-md border border-input bg-transparent px-3 text-sm outline-none transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring dark:bg-input/30"
         >
           <option value="">All Statuses</option>
           {allStatuses.map((s) => (
@@ -137,7 +128,7 @@ export default async function ClaimsPage({
         </select>
         <button
           type="submit"
-          className="inline-flex h-8 items-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground"
+          className="shadow-sm shadow-black/20 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 text-xs h-7 font-medium transition-colors"
         >
           Filter
         </button>
@@ -145,49 +136,51 @@ export default async function ClaimsPage({
 
       {/* Table */}
       {claimRows.length === 0 ? (
-        <div className="rounded-lg border p-8 text-center text-muted-foreground">
-          No claims found
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16 text-center">
+          <p className="text-sm text-muted-foreground">No claims found</p>
         </div>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>ID</TableHead>
-              <TableHead>Customer Name</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead>Updated</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {claimRows.map((row) => (
-              <TableRow key={row.id}>
-                <TableCell>
-                  <Link
-                    href={`/claims/${row.id}`}
-                    className="font-mono text-primary hover:underline"
-                  >
-                    {row.id.slice(0, 8)}
-                  </Link>
-                </TableCell>
-                <TableCell>
-                  {row.customerFirstName} {row.customerLastName}
-                </TableCell>
-                <TableCell className="capitalize">{row.type}</TableCell>
-                <TableCell>
-                  <span
-                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[row.status] ?? ''}`}
-                  >
-                    {statusLabels[row.status] ?? row.status}
-                  </span>
-                </TableCell>
-                <TableCell>{row.createdAt.toLocaleDateString()}</TableCell>
-                <TableCell>{row.updatedAt.toLocaleDateString()}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <div className="rounded-lg border bg-card overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="border-b bg-muted/50">
+              <tr>
+                <th className="h-12 px-4 text-left font-medium text-muted-foreground">ID</th>
+                <th className="h-12 px-4 text-left font-medium text-muted-foreground">Customer</th>
+                <th className="h-12 px-4 text-left font-medium text-muted-foreground">Type</th>
+                <th className="h-12 px-4 text-left font-medium text-muted-foreground">Status</th>
+                <th className="h-12 px-4 text-left font-medium text-muted-foreground">Created</th>
+                <th className="h-12 px-4 text-left font-medium text-muted-foreground">Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {claimRows.map((row) => (
+                <tr key={row.id} className="border-b transition-colors hover:bg-muted/50">
+                  <td className="p-4">
+                    <Link
+                      href={`/claims/${row.id}`}
+                      className="font-mono text-primary hover:underline"
+                    >
+                      {row.id.slice(0, 8)}
+                    </Link>
+                  </td>
+                  <td className="p-4">
+                    {row.customerFirstName} {row.customerLastName}
+                  </td>
+                  <td className="p-4 capitalize">{row.type}</td>
+                  <td className="p-4">
+                    <span
+                      className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${statusStyles[row.status] ?? ''}`}
+                    >
+                      {statusLabels[row.status] ?? row.status}
+                    </span>
+                  </td>
+                  <td className="p-4">{row.createdAt.toLocaleDateString()}</td>
+                  <td className="p-4">{row.updatedAt.toLocaleDateString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

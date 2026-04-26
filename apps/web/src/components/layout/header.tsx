@@ -1,8 +1,9 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import { Menu } from 'lucide-react';
+import { Menu, Moon, Sun } from 'lucide-react';
 import { useState } from 'react';
+import { useTheme } from 'next-themes';
 import { Button } from '@/components/ui/button';
 import {
   Sheet,
@@ -27,17 +28,34 @@ function getPageTitle(pathname: string): string {
   return 'Bella';
 }
 
+function ThemeToggle() {
+  const { resolvedTheme, setTheme } = useTheme();
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      className="hover:bg-accent hover:text-accent-foreground rounded-md"
+      onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+      aria-label="Toggle theme"
+    >
+      <Sun className="size-4 rotate-0 scale-100 transition-transform dark:-rotate-90 dark:scale-0" />
+      <Moon className="absolute size-4 rotate-90 scale-0 transition-transform dark:rotate-0 dark:scale-100" />
+    </Button>
+  );
+}
+
 export function Header() {
   const pathname = usePathname();
   const title = getPageTitle(pathname);
   const [open, setOpen] = useState(false);
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-4 border-b bg-background px-4 md:px-6">
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-4 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4 sm:px-6">
       <Button
         variant="ghost"
         size="icon-sm"
-        className="md:hidden"
+        className="sm:hidden"
         onClick={() => setOpen(true)}
         aria-label="Open navigation"
       >
@@ -52,8 +70,10 @@ export function Header() {
       </Sheet>
 
       <div className="flex-1">
-        <h1 className="font-display text-lg font-semibold">{title}</h1>
+        <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
       </div>
+
+      <ThemeToggle />
     </header>
   );
 }
